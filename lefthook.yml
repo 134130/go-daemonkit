@@ -1,0 +1,8 @@
+pre-commit:
+  jobs:
+    - name: tidy
+      run: go mod tidy
+      stage_fixed: true
+    - name: golangci-lint
+      run: golangci-lint fmt {staged_files}
+      stage_fixed: true
