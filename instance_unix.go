@@ -17,6 +17,10 @@ func instanceEndpoint(directory string) (string, error) {
 }
 
 func lockInstance(directory string) (func() error, error) {
+	return lockNamedInstance(directory, "runtime")
+}
+
+func lockNamedInstance(directory, name string) (func() error, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, err
 	}
@@ -24,7 +28,7 @@ func lockInstance(directory string) (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(filepath.Dir(endpoint), "runtime.lock")
+	path := filepath.Join(filepath.Dir(endpoint), name+".lock")
 	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, err

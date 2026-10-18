@@ -26,6 +26,13 @@ func instanceEndpoint(directory string) (string, error) {
 }
 
 func lockInstance(directory string) (func() error, error) {
+	return lockNamedInstance(directory, "runtime")
+}
+
+func lockNamedInstance(directory, kind string) (func() error, error) {
+	if err := prepareInstanceDirectory(directory); err != nil {
+		return nil, err
+	}
 	key, sid, err := instanceKey(directory)
 	if err != nil {
 		return nil, err
@@ -35,7 +42,7 @@ func lockInstance(directory string) (func() error, error) {
 		return nil, err
 	}
 	attributes := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
-	name, err := windows.UTF16PtrFromString(`Global\` + key)
+	name, err := windows.UTF16PtrFromString(`Global\` + key + "-" + kind)
 	if err != nil {
 		return nil, err
 	}

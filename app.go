@@ -103,15 +103,37 @@ func (a *App) Run(ctx context.Context) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
-	listener, err := listenLocal(a.endpoint)
+	if err := recoverExecution(a.directory, a.endpoint); err != nil {
+		return err
+	}
+	process, err := processIdentity(os.Getpid())
+	if err != nil {
+		return err
+	}
+	nonce := rand.Text()
+	listener, socket, publish, err := prepareExecutionEndpoint(a.endpoint, nonce)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
+	record := executionRecord{PID: os.Getpid(), ProcessIdentity: process, LaunchNonce: nonce, SocketIdentity: socket}
+	if err := writeExecution(a.directory, record); err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := listener.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+			return
+		}
+		err = errors.Join(err, removeExecution(a.directory, record))
+	}()
+	if err := publish(); err != nil {
+		return err
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	identity := initializeResult{a.options.AppID, a.options.InstanceID, protocolVersion, a.options.Version, rand.Text()}
+	identity := initializeResult{a.options.AppID, a.options.InstanceID, protocolVersion, a.options.Version, record.LaunchNonce}
 	stop := make(chan struct{})
 	var mu sync.Mutex
 	var handlers sync.WaitGroup
