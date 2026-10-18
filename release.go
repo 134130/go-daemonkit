@@ -12,7 +12,7 @@ import (
 
 // prepareRelease never overwrites a published executable, including on Windows.
 // The operation lock serializes selection of releases for this instance.
-func prepareRelease(directory, source string) (string, error) {
+func prepareRelease(directory, source, appID string) (string, error) {
 	releases := filepath.Join(directory, "releases")
 	if err := os.MkdirAll(releases, 0o700); err != nil {
 		return "", err
@@ -22,7 +22,7 @@ func prepareRelease(directory, source string) (string, error) {
 		return "", err
 	}
 	defer os.RemoveAll(staging)
-	name := "daemon"
+	name := appID + "d"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}

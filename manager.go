@@ -120,7 +120,7 @@ func (m *Manager) ensureRunning(ctx context.Context) error {
 	if err := releaseRuntime(); err != nil {
 		return err
 	}
-	path, err := prepareRelease(m.app.directory, m.executable)
+	path, err := prepareRelease(m.app.directory, m.executable, m.app.options.AppID)
 	if err != nil {
 		return err
 	}
