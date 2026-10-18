@@ -34,6 +34,10 @@ type App struct {
 	options   Options
 	directory string
 	endpoint  string
+	serviceMu sync.Mutex
+	services  []registeredService
+	sealed    bool
+	running   bool
 }
 
 // New validates configuration and resolves paths without creating resources.
@@ -95,6 +99,15 @@ func stateRoot() (string, error) {
 // the instance lock until all connections and the listener have been closed.
 // A shutdown RPC returns nil; caller cancellation returns ctx.Err().
 func (a *App) Run(ctx context.Context) (err error) {
+	a.serviceMu.Lock()
+	if a.running {
+		a.serviceMu.Unlock()
+		return ErrAlreadyRunning
+	}
+	a.sealed, a.running = true, true
+	a.serviceMu.Unlock()
+	defer func() { a.serviceMu.Lock(); a.running = false; a.serviceMu.Unlock() }()
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -137,6 +150,15 @@ func (a *App) Run(ctx context.Context) (err error) {
 		}
 		err = errors.Join(err, removeExecution(a.directory, record))
 	}()
+	started, startupErr := a.startServices(ctx)
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopGrace)
+		defer cancel()
+		err = errors.Join(err, shutdownServices(cleanupCtx, started))
+	}()
+	if startupErr != nil {
+		return startupErr
+	}
 	if err := publish(); err != nil {
 		return err
 	}

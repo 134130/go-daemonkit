@@ -40,6 +40,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := app.Register(&ClockService{}); err != nil {
+		log.Fatal(err)
+	}
 	if err := app.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatal(err)
 	}
