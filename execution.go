@@ -40,32 +40,8 @@ func lockOperation(ctx context.Context, directory string) (func() error, error) 
 }
 
 func readExecution(directory string) (executionRecord, error) {
-	path := filepath.Join(directory, "runtime.json")
-	info, err := os.Lstat(path)
-	if err != nil {
-		return executionRecord{}, err
-	}
-	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 16<<10 {
-		return executionRecord{}, fmt.Errorf("execution record must be a regular file of at most 16 KiB")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return executionRecord{}, err
-	}
-	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil {
-		return executionRecord{}, err
-	}
-	if !os.SameFile(info, opened) {
-		return executionRecord{}, fmt.Errorf("execution record changed during read")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, 16<<10))
-	if err != nil {
-		return executionRecord{}, err
-	}
 	var record executionRecord
-	if err := json.Unmarshal(data, &record); err != nil {
+	if err := readJSONRecord(directory, "runtime.json", &record); err != nil {
 		return record, err
 	}
 	if record.PID <= 0 || record.ProcessIdentity == "" || record.LaunchNonce == "" {
@@ -74,7 +50,51 @@ func readExecution(directory string) (executionRecord, error) {
 	return record, nil
 }
 
+func readJSONRecord(directory, name string, target any) error {
+	for range 3 {
+		err := readJSONRecordOnce(directory, name, target)
+		if !errors.Is(err, errRecordChanged) {
+			return err
+		}
+	}
+	return errRecordChanged
+}
+
+var errRecordChanged = errors.New("state record changed during read")
+
+func readJSONRecordOnce(directory, name string, target any) error {
+	path := filepath.Join(directory, name)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 16<<10 {
+		return fmt.Errorf("state record must be a regular file of at most 16 KiB")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(info, opened) {
+		return errRecordChanged
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 16<<10))
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, target)
+}
+
 func writeExecution(directory string, record executionRecord) error {
+	return writeJSONRecord(directory, "runtime.json", record)
+}
+
+func writeJSONRecord(directory, name string, record any) error {
 	data, err := json.Marshal(record)
 	if err != nil {
 		return err
@@ -94,7 +114,7 @@ func writeExecution(directory string, record executionRecord) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), filepath.Join(directory, "runtime.json"))
+	return os.Rename(file.Name(), filepath.Join(directory, name))
 }
 
 // recoverExecution requires the runtime lock. Unverifiable ownership fails

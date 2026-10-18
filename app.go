@@ -111,6 +111,16 @@ func (a *App) Run(ctx context.Context) (err error) {
 		return err
 	}
 	nonce := rand.Text()
+	if requested := os.Getenv(launchNonceEnv); requested != "" {
+		reservation, err := readLaunch(a.directory)
+		if err != nil {
+			return err
+		}
+		if reservation.LaunchNonce != requested {
+			return fmt.Errorf("launch reservation does not match requested generation")
+		}
+		nonce = requested
+	}
 	listener, socket, publish, err := prepareExecutionEndpoint(a.endpoint, nonce)
 	if err != nil {
 		return err

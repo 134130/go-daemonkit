@@ -4,11 +4,14 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 
 	"github.com/coder/websocket"
 )
+
+var errHandshake = errors.New("daemon handshake failed")
 
 // connectLocal bounds transport setup and RPC initialization by one deadline.
 func connectLocal(ctx context.Context, path string, params initializeParams) (*websocket.Conn, initializeResult, error) {
@@ -34,7 +37,7 @@ func connectLocal(ctx context.Context, path string, params initializeParams) (*w
 	}
 	result, err := initializeClient(ctx, conn, params)
 	if err != nil {
-		return nil, initializeResult{}, err
+		return nil, initializeResult{}, errors.Join(errHandshake, err)
 	}
 	return conn, result, nil
 }
