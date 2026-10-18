@@ -12,6 +12,7 @@
 - 정해진 관리 디렉터리의 release 선택 정보를 통해 실행 파일을 찾는다.
 - 실행 시 선택된 release의 실제 경로를 확정한다. 실행 중인 release 파일은 수정하지 않는다.
 - 상태·로그·작업 디렉터리는 release 디렉터리 밖에 둔다.
+- 인스턴스 상태 경로는 `<state root>/<appID>/<instanceID>`다. Linux/macOS는 `XDG_STATE_HOME`을 사용하며 미설정·빈 값·상대 경로이면 `~/.local/state`를 사용한다. Windows는 `LOCALAPPDATA`를 사용한다.
 - 선택된 release와 실행 중인 release를 구분한다.
 - 인스턴스는 사용자·앱·인스턴스별 고정 경로로 식별한다. Binary·Protocol 버전은 인스턴스 식별에 포함하지 않는다.
 - Start·Stop·Restart·Update는 인스턴스별 operation lock으로 직렬화한다. Start는 Ready 확인 또는 대기 종료까지 lock을 유지한다.

@@ -187,6 +187,8 @@ func emptyParams(params json.RawMessage) bool {
 }
 
 func rejectHandshake(ctx context.Context, conn *websocket.Conn, request rpcMessage, code int, reason string) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
 	err := &rpcError{code, reason}
 	// Valid notifications have no response, including out-of-order ones.
 	if len(request.ID) == 0 && request.Method != "" && request.Error == nil && len(request.Result) == 0 {
@@ -200,6 +202,8 @@ func rejectHandshake(ctx context.Context, conn *websocket.Conn, request rpcMessa
 }
 
 func replyReadError(ctx context.Context, conn *websocket.Conn, err error) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
 	var failure *rpcError
 	if errors.As(err, &failure) {
 		return errors.Join(err, writeRPC(ctx, conn, rpcMessage{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: failure}))
