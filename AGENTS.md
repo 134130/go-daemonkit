@@ -1,0 +1,2 @@
+- Prefer go1.27 new features and grammar
+- Use synctest for testing concurrency
