@@ -54,6 +54,19 @@ func (m *Manager) EnsureRunning(ctx context.Context) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
+	return m.ensureRunning(ctx)
+}
+
+// ensureRunning requires the operation lock.
+func (m *Manager) ensureRunning(ctx context.Context) error {
+	if _, err := os.Lstat(filepath.Join(m.app.directory, "stopping.json")); err == nil {
+		if err := m.stop(ctx); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
 	pending, pendingErr := readLaunch(m.app.directory)
 	if pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist) {
 		return pendingErr

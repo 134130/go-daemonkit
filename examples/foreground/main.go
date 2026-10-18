@@ -15,18 +15,26 @@ func main() {
 	options := daemon.Options{AppID: "example", Version: "dev"}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if len(os.Args) == 2 && os.Args[1] == "start" {
+	if len(os.Args) == 2 && (os.Args[1] == "start" || os.Args[1] == "stop" || os.Args[1] == "restart") {
 		manager, err := daemon.NewManager(options, "daemon")
 		if err != nil {
 			log.Fatal(err)
 		}
-		if err := manager.EnsureRunning(ctx); err != nil {
+		switch os.Args[1] {
+		case "start":
+			err = manager.EnsureRunning(ctx)
+		case "stop":
+			err = manager.Stop(ctx)
+		case "restart":
+			err = manager.Restart(ctx)
+		}
+		if err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
 	if len(os.Args) > 1 && (len(os.Args) != 2 || os.Args[1] != "daemon") {
-		log.Fatal("usage: foreground [start|daemon]")
+		log.Fatal("usage: foreground [start|stop|restart|daemon]")
 	}
 	app, err := daemon.New(options)
 	if err != nil {

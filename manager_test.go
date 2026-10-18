@@ -98,6 +98,14 @@ func TestManagerDaemonHelper(t *testing.T) {
 	if err := app.Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	if gate := os.Getenv("DAEMONKIT_TEST_EXIT_GATE"); gate != "" {
+		for {
+			if _, err := os.Stat(gate); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 }
 
 func TestEnsureRunningConcurrent(t *testing.T) {
