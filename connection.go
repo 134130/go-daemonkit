@@ -25,12 +25,18 @@ type rpcMessage struct {
 	Error   *rpcError       `json:"error,omitempty"`
 }
 
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+// RPCError is a JSON-RPC failure returned by the daemon.
+// Application errors use -32000, overload -32001, and LSP cancellation -32800.
+// Code and Data are machine-readable; Message is diagnostic text.
+type RPCError struct {
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
 }
 
-func (e *rpcError) Error() string {
+type rpcError = RPCError
+
+func (e *RPCError) Error() string {
 	return fmt.Sprintf("RPC error %d: %s", e.Code, e.Message)
 }
 
@@ -127,26 +133,26 @@ func readRPC(ctx context.Context, conn *websocket.Conn) (rpcMessage, error) {
 		return rpcMessage{}, err
 	}
 	if kind != websocket.MessageText {
-		return rpcMessage{}, &rpcError{-32600, "expected text message"}
+		return rpcMessage{}, &rpcError{Code: -32600, Message: "expected text message"}
 	}
 	if !json.Valid(payload) {
-		return rpcMessage{}, &rpcError{-32700, "invalid JSON"}
+		return rpcMessage{}, &rpcError{Code: -32700, Message: "invalid JSON"}
 	}
 	var message rpcMessage
 	if err := json.Unmarshal(payload, &message); err != nil || message.JSONRPC != "2.0" {
-		return rpcMessage{}, &rpcError{-32600, "invalid JSON-RPC message"}
+		return rpcMessage{}, &rpcError{Code: -32600, Message: "invalid JSON-RPC message"}
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &fields); err != nil {
-		return rpcMessage{}, &rpcError{-32600, "expected JSON-RPC object"}
+		return rpcMessage{}, &rpcError{Code: -32600, Message: "expected JSON-RPC object"}
 	}
 	if _, exists := fields["method"]; exists && message.Method == "" {
-		return rpcMessage{}, &rpcError{-32600, "invalid method"}
+		return rpcMessage{}, &rpcError{Code: -32600, Message: "invalid method"}
 	}
 	if raw, exists := fields["error"]; exists {
 		var failure map[string]json.RawMessage
 		if json.Unmarshal(raw, &failure) != nil || message.Error == nil || failure["code"] == nil || failure["message"] == nil || bytes.Equal(failure["code"], []byte("null")) || bytes.Equal(failure["message"], []byte("null")) {
-			return rpcMessage{}, &rpcError{-32600, "invalid error object"}
+			return rpcMessage{}, &rpcError{Code: -32600, Message: "invalid error object"}
 		}
 	}
 	return message, nil
@@ -189,7 +195,7 @@ func emptyParams(params json.RawMessage) bool {
 func rejectHandshake(ctx context.Context, conn *websocket.Conn, request rpcMessage, code int, reason string) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	err := &rpcError{code, reason}
+	err := &rpcError{Code: code, Message: reason}
 	// Valid notifications have no response, including out-of-order ones.
 	if len(request.ID) == 0 && request.Method != "" && request.Error == nil && len(request.Result) == 0 {
 		return err

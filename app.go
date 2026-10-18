@@ -163,13 +163,12 @@ func (a *App) Run(ctx context.Context) (err error) {
 		return err
 	}
 
-	runCtx, cancel := context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	identity := initializeResult{a.options.AppID, a.options.InstanceID, protocolVersion, a.options.Version, record.LaunchNonce}
-	stop := make(chan struct{})
+	rpc := newRPCServer(a.services)
 	var mu sync.Mutex
 	var handlers sync.WaitGroup
-	stopping := false
 	active := 0
 	server := &http.Server{
 		ReadHeaderTimeout: handshakeTimeout,
@@ -178,6 +177,9 @@ func (a *App) Run(ctx context.Context) (err error) {
 	}
 	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
+		rpc.mu.Lock()
+		stopping := rpc.stopping
+		rpc.mu.Unlock()
 		if stopping || active >= 128 {
 			mu.Unlock()
 			http.Error(w, "daemon unavailable", http.StatusServiceUnavailable)
@@ -199,46 +201,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 		if initializeServer(runCtx, conn, identity) != nil {
 			return
 		}
-		for {
-			request, err := readRPC(runCtx, conn)
-			if err != nil {
-				_ = replyReadError(runCtx, conn, err)
-				return
-			}
-			if request.Method == "initialize" || request.Method == "initialized" || request.Method == "" || request.Error != nil || len(request.Result) != 0 || len(request.ID) != 0 && !validRequestID(request.ID) {
-				_ = rejectHandshake(runCtx, conn, request, -32600, "invalid request or initialization sequence")
-				return
-			}
-			// Notifications never initiate shutdown and never receive a response.
-			if len(request.ID) == 0 {
-				continue
-			}
-			if request.Method != "shutdown" {
-				if replyControlError(runCtx, conn, request.ID, -32601, "method not found") != nil {
-					return
-				}
-				continue
-			}
-			if !emptyParams(request.Params) {
-				if replyControlError(runCtx, conn, request.ID, -32602, "shutdown takes no parameters") != nil {
-					return
-				}
-				continue
-			}
-			mu.Lock()
-			if stopping {
-				mu.Unlock()
-				return
-			}
-			stopping = true
-			mu.Unlock()
-			// Shutdown continues even if the caller disappears during the reply.
-			defer close(stop)
-			replyCtx, replyCancel := context.WithTimeout(runCtx, time.Second)
-			_ = writeRPC(replyCtx, conn, rpcMessage{JSONRPC: "2.0", ID: request.ID, Result: json.RawMessage(`null`)})
-			replyCancel()
-			return
-		}
+		rpc.serve(runCtx, conn)
 	})
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
@@ -246,18 +209,35 @@ func (a *App) Run(ctx context.Context) (err error) {
 	select {
 	case <-ctx.Done():
 		err = ctx.Err()
-	case <-stop:
+	case <-rpc.stop:
 	case serveErr = <-served:
 		served = nil
 	}
-	mu.Lock()
-	stopping = true
-	mu.Unlock()
-	cancel()
+	rpc.mu.Lock()
+	rpc.stopping = true
+	rpc.mu.Unlock()
 	closeErr := server.Close()
 	if served != nil {
 		serveErr = <-served
 	}
+	// Admission is closed before Wait, so no new calls can be added.
+	drained := make(chan struct{})
+	go func() { rpc.calls.Wait(); close(drained) }()
+	timer := time.NewTimer(stopGrace - time.Second)
+	select {
+	case <-drained:
+	case <-timer.C:
+	}
+	timer.Stop()
+	cancel()
+	// Give cooperative cancellation time to unwind before Service cleanup.
+	timer = time.NewTimer(time.Second)
+	select {
+	case <-drained:
+	case <-timer.C:
+		err = errors.Join(err, fmt.Errorf("RPC shutdown deadline exceeded"))
+	}
+	timer.Stop()
 	handlers.Wait()
 	if errors.Is(serveErr, http.ErrServerClosed) {
 		serveErr = nil
@@ -265,8 +245,8 @@ func (a *App) Run(ctx context.Context) (err error) {
 	return errors.Join(err, closeErr, serveErr)
 }
 
-func replyControlError(ctx context.Context, conn *websocket.Conn, id json.RawMessage, code int, message string) error {
+func replyRPCError(ctx context.Context, conn *websocket.Conn, id json.RawMessage, failure *RPCError) error {
 	replyCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	return writeRPC(replyCtx, conn, rpcMessage{JSONRPC: "2.0", ID: id, Error: &rpcError{code, message}})
+	return writeRPC(replyCtx, conn, rpcMessage{JSONRPC: "2.0", ID: id, Error: failure})
 }

@@ -47,3 +47,24 @@ func (s *ClockService) Shutdown(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+
+type NowRequest struct{}
+
+type NowResponse struct {
+	Time time.Time `json:"time"`
+}
+
+func (*ClockService) Now(ctx context.Context, _ NowRequest) (NowResponse, error) {
+	log.Print("clock: Now called")
+	for range 10 {
+		select {
+		case <-ctx.Done():
+			log.Print("clock: Now canceled")
+			return NowResponse{}, ctx.Err()
+		default:
+			time.Sleep(100 * time.Millisecond) // Simulate work
+		}
+	}
+	log.Print("clock: Now returning time")
+	return NowResponse{Time: time.Now()}, nil
+}
