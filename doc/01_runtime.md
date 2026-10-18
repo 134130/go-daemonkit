@@ -17,6 +17,11 @@
 - Start·Stop·Restart·Update는 인스턴스별 operation lock으로 직렬화한다. Start는 Ready 확인 또는 대기 종료까지 lock을 유지한다.
 - 실행 세대는 `launchNonce`로 구분한다. 종료·자원 정리 시 PID와 OS process identity, 실행 세대의 소유권을 확인한다.
 - Ready는 필수 초기화 완료와 실제 제어 IPC의 호환 Handshake 응답으로 확인한다.
+- 필수 초기화를 마친 뒤 성공 Handshake를 허용한다. Manager는 프로세스 생존을 확인하며 Handshake를 재시도한다. 연결 실패만으로 프로세스 종료를 단정하지 않는다.
+- 공개 Lifecycle enum과 별도 Status RPC는 현재 범위에 포함하지 않는다.
+- `shutdown` RPC 응답은 종료 수락을 의미한다. Manager의 Stop은 해당 실행 세대의 실제 프로세스 종료를 확인한 뒤 성공한다.
+- 종료 수락 시 신규 업무 요청을 차단하고 응답 전송을 시도한 뒤 진행 중 요청 대기와 자원 정리를 수행한다. 응답 실패·호출자 연결 단절로 종료를 취소하지 않는다.
+- 종료 대기·정리는 유한한 시간 안에 수행한다. 유예 시간 초과 시 Manager는 소유권을 재확인하고 강제 종료한다.
 - CLI 취소·종료·Ready timeout은 대기만 끝낸다. 이미 생성된 데몬은 유지하며, timeout·취소는 호출자에게 오류로 반환한다.
 - 다음 Start는 기존 프로세스와 시작 상태를 재확인한다. 살아 있으나 준비되지 않은 데몬은 대기하며 중복 생성하지 않는다.
 - 데몬 자체의 초기화 실패는 자원 정리 후 종료한다.
@@ -25,7 +30,7 @@
 
 - 직접 실행·종료: 초기화 실패 시 정리, 정상 종료 시 역순 정리와 시간 제한.
 - Single Instance: 실행 중 Lock 유지, 동시 시작 시 프로세스 생성 직렬화.
-- 최소 제어 IPC: Handshake, Ready, Status, Stop. 업무 RPC는 별도 도메인.
+- 최소 제어 IPC: Handshake와 `shutdown`. 업무 RPC는 별도 도메인.
 - Ownership: PID만 신뢰하지 않으며, 소유권 없는 프로세스 종료·소켓 삭제 금지.
 - 실패 복구: Crash, Stale Socket, PID 재사용, 시작 도중 CLI 종료 후 재실행.
 - Diagnostics: 상태·시작 실패 이유·로그. OS별 Lock·IPC·프로세스 생성 차이 검증.
