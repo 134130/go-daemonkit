@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	storageimpl "github.com/134130/go-daemonkit/internal/storage"
 	"github.com/coder/websocket"
 )
 
@@ -38,8 +39,7 @@ type App struct {
 	services  []registeredService
 	sealed    bool
 	running   bool
-	storageMu sync.Mutex
-	storage   *storageRuntime
+	storage   storageimpl.Database
 }
 
 // New validates configuration and resolves paths without creating resources.

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"github.com/134130/go-daemonkit/storage"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 	"time"
 )
 
-func testStorage(t *testing.T) (*App, *Storage) {
+func testStorage(t *testing.T) (*App, *storage.Store) {
 	t.Helper()
 	a := testApp(t)
 	if err := os.MkdirAll(a.directory, 0o700); err != nil {
@@ -37,7 +38,7 @@ func testStorage(t *testing.T) (*App, *Storage) {
 
 func TestStoragePersistenceAndIsolation(t *testing.T) {
 	a, store := testStorage(t)
-	if err := store.Update(t.Context(), func(tx *WriteTx) error {
+	if err := store.Update(t.Context(), func(tx *storage.WriteTx) error {
 		for _, key := range []string{"prefix_b", "prefix_a", "prefix%literal", "other"} {
 			if err := tx.Set(key, []byte(key)); err != nil {
 				return err
@@ -50,13 +51,13 @@ func TestStoragePersistenceAndIsolation(t *testing.T) {
 	if err := a.closeStorage(); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.View(t.Context(), func(*ReadTx) error { return nil }); !errors.Is(err, ErrStorageClosed) {
+	if err := store.View(t.Context(), func(*storage.ReadTx) error { return nil }); !errors.Is(err, storage.ErrStorageClosed) {
 		t.Fatalf("closed = %v", err)
 	}
 	if err := a.openStorage(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.View(t.Context(), func(tx *ReadTx) error {
+	if err := store.View(t.Context(), func(tx *storage.ReadTx) error {
 		keys, err := tx.List("prefix_")
 		if err != nil {
 			return err
@@ -77,7 +78,7 @@ func TestStoragePersistenceAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	other, _ := a.Storage("other")
-	if err := other.View(t.Context(), func(tx *ReadTx) error { _, err := tx.Get("prefix_a"); return err }); !errors.Is(err, ErrNotFound) {
+	if err := other.View(t.Context(), func(tx *storage.ReadTx) error { _, err := tx.Get("prefix_a"); return err }); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("namespace isolation = %v", err)
 	}
 	isolated, err := New(Options{AppID: a.options.AppID, InstanceID: "another", Version: "test"})
@@ -92,7 +93,7 @@ func TestStoragePersistenceAndIsolation(t *testing.T) {
 	}
 	defer isolated.closeStorage()
 	isolatedStore, _ := isolated.Storage("test")
-	if err := isolatedStore.View(t.Context(), func(tx *ReadTx) error { _, err := tx.Get("prefix_a"); return err }); !errors.Is(err, ErrNotFound) {
+	if err := isolatedStore.View(t.Context(), func(tx *storage.ReadTx) error { _, err := tx.Get("prefix_a"); return err }); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("instance isolation = %v", err)
 	}
 }
@@ -100,8 +101,8 @@ func TestStoragePersistenceAndIsolation(t *testing.T) {
 func TestStorageRollbackAndExpiredTransaction(t *testing.T) {
 	_, store := testStorage(t)
 	failure := errors.New("callback failed")
-	var escaped *WriteTx
-	err := store.Update(t.Context(), func(tx *WriteTx) error {
+	var escaped *storage.WriteTx
+	err := store.Update(t.Context(), func(tx *storage.WriteTx) error {
 		escaped = tx
 		if err := tx.Set("key", []byte("value")); err != nil {
 			return err
@@ -111,10 +112,10 @@ func TestStorageRollbackAndExpiredTransaction(t *testing.T) {
 	if !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
-	if err := escaped.Set("late", nil); !errors.Is(err, ErrTransactionClosed) {
+	if err := escaped.Set("late", nil); !errors.Is(err, storage.ErrTransactionClosed) {
 		t.Fatalf("escaped = %v", err)
 	}
-	if err := store.View(t.Context(), func(tx *ReadTx) error { _, err := tx.Get("key"); return err }); !errors.Is(err, ErrNotFound) {
+	if err := store.View(t.Context(), func(tx *storage.ReadTx) error { _, err := tx.Get("key"); return err }); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatal(err)
 	}
 	func() {
@@ -123,18 +124,18 @@ func TestStorageRollbackAndExpiredTransaction(t *testing.T) {
 				t.Error("panic not propagated")
 			}
 		}()
-		_ = store.Update(t.Context(), func(tx *WriteTx) error {
+		_ = store.Update(t.Context(), func(tx *storage.WriteTx) error {
 			if err := tx.Set("panic", nil); err != nil {
 				t.Fatal(err)
 			}
 			panic("panic")
 		})
 	}()
-	if err := store.View(t.Context(), func(tx *ReadTx) error { _, err := tx.Get("panic"); return err }); !errors.Is(err, ErrNotFound) {
+	if err := store.View(t.Context(), func(tx *storage.ReadTx) error { _, err := tx.Get("panic"); return err }); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	err = store.Update(ctx, func(tx *WriteTx) error {
+	err = store.Update(ctx, func(tx *storage.WriteTx) error {
 		if err := tx.Set("canceled", nil); err != nil {
 			return err
 		}
@@ -144,24 +145,24 @@ func TestStorageRollbackAndExpiredTransaction(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel = %v", err)
 	}
-	if err := store.View(t.Context(), func(tx *ReadTx) error { _, err := tx.Get("canceled"); return err }); !errors.Is(err, ErrNotFound) {
+	if err := store.View(t.Context(), func(tx *storage.ReadTx) error { _, err := tx.Get("canceled"); return err }); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatal(err)
 	}
 }
 
 func TestStorageSnapshotAndConcurrentUpdates(t *testing.T) {
 	_, store := testStorage(t)
-	if err := store.Update(t.Context(), func(tx *WriteTx) error { return tx.Set("count", []byte("0")) }); err != nil {
+	if err := store.Update(t.Context(), func(tx *storage.WriteTx) error { return tx.Set("count", []byte("0")) }); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.View(t.Context(), func(tx *ReadTx) error {
+	if err := store.View(t.Context(), func(tx *storage.ReadTx) error {
 		before, err := tx.Get("count")
 		if err != nil {
 			return err
 		}
 		done := make(chan error, 1)
 		go func() {
-			done <- store.Update(t.Context(), func(tx *WriteTx) error { return tx.Set("count", []byte("1")) })
+			done <- store.Update(t.Context(), func(tx *storage.WriteTx) error { return tx.Set("count", []byte("1")) })
 		}()
 		if err := <-done; err != nil {
 			return err
@@ -177,7 +178,7 @@ func TestStorageSnapshotAndConcurrentUpdates(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 20 {
 		wg.Go(func() {
-			err := store.Update(t.Context(), func(tx *WriteTx) error {
+			err := store.Update(t.Context(), func(tx *storage.WriteTx) error {
 				value, err := tx.Get("count")
 				if err != nil {
 					return err
@@ -194,7 +195,7 @@ func TestStorageSnapshotAndConcurrentUpdates(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if err := store.View(t.Context(), func(tx *ReadTx) error {
+	if err := store.View(t.Context(), func(tx *storage.ReadTx) error {
 		value, err := tx.Get("count")
 		if string(value) != "21" {
 			t.Errorf("lost update: %q", value)
@@ -207,27 +208,27 @@ func TestStorageSnapshotAndConcurrentUpdates(t *testing.T) {
 
 func TestStorageLimitsAndReadOnly(t *testing.T) {
 	_, store := testStorage(t)
-	err := store.Update(t.Context(), func(tx *WriteTx) error {
+	err := store.Update(t.Context(), func(tx *storage.WriteTx) error {
 		if err := tx.Set("valid", nil); err != nil {
 			return err
 		}
 		_ = tx.Set("large", make([]byte, (1<<20)+1))
 		return nil
 	})
-	if !errors.Is(err, ErrStorageLimit) {
+	if !errors.Is(err, storage.ErrStorageLimit) {
 		t.Fatalf("ignored write failure = %v", err)
 	}
-	if err := store.View(t.Context(), func(tx *ReadTx) error {
-		forged := &WriteTx{*tx}
+	if err := store.View(t.Context(), func(tx *storage.ReadTx) error {
+		forged := &storage.WriteTx{ReadTx: *tx}
 		if err := forged.Set("forbidden", nil); err == nil {
 			t.Fatal("read-only write accepted")
 		}
 		_, err := tx.Get("valid")
 		return err
-	}); !errors.Is(err, ErrNotFound) {
+	}); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatal(err)
 	}
-	if err := store.Update(t.Context(), func(tx *WriteTx) error {
+	if err := store.Update(t.Context(), func(tx *storage.WriteTx) error {
 		for i := range 1001 {
 			if err := tx.Set(strconv.Itoa(i), nil); err != nil {
 				return err
@@ -237,13 +238,13 @@ func TestStorageLimitsAndReadOnly(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.View(t.Context(), func(tx *ReadTx) error {
+	if err := store.View(t.Context(), func(tx *storage.ReadTx) error {
 		keys, err := tx.List("")
 		if keys != nil {
 			t.Fatal("partial list returned")
 		}
 		return err
-	}); !errors.Is(err, ErrStorageLimit) {
+	}); !errors.Is(err, storage.ErrStorageLimit) {
 		t.Fatal(err)
 	}
 }
@@ -257,15 +258,15 @@ func TestStorageLifecycle(t *testing.T) {
 	if _, err := os.Stat(a.directory); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("Storage created files")
 	}
-	if err := store.View(t.Context(), func(*ReadTx) error { return nil }); !errors.Is(err, ErrStorageClosed) {
+	if err := store.View(t.Context(), func(*storage.ReadTx) error { return nil }); !errors.Is(err, storage.ErrStorageClosed) {
 		t.Fatal(err)
 	}
 	if err := a.Register(&firstService{testHooks{
 		start: func(ctx context.Context) error {
-			return store.Update(ctx, func(tx *WriteTx) error { return tx.Set("started", nil) })
+			return store.Update(ctx, func(tx *storage.WriteTx) error { return tx.Set("started", nil) })
 		},
 		stop: func(ctx context.Context) error {
-			return store.Update(ctx, func(tx *WriteTx) error { return tx.Set("stopped", nil) })
+			return store.Update(ctx, func(tx *storage.WriteTx) error { return tx.Set("stopped", nil) })
 		},
 	}}); err != nil {
 		t.Fatal(err)
@@ -276,14 +277,14 @@ func TestStorageLifecycle(t *testing.T) {
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if err := store.View(t.Context(), func(*ReadTx) error { return nil }); !errors.Is(err, ErrStorageClosed) {
+	if err := store.View(t.Context(), func(*storage.ReadTx) error { return nil }); !errors.Is(err, storage.ErrStorageClosed) {
 		t.Fatal(err)
 	}
 	if err := a.openStorage(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer a.closeStorage()
-	if err := store.View(t.Context(), func(tx *ReadTx) error { _, err := tx.Get("stopped"); return err }); err != nil {
+	if err := store.View(t.Context(), func(tx *storage.ReadTx) error { _, err := tx.Get("stopped"); return err }); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -318,13 +319,13 @@ func TestStorageWriterWaitCancellation(t *testing.T) {
 		entered, release := make(chan struct{}), make(chan struct{})
 		done := make(chan error, 1)
 		go func() {
-			done <- store.Update(t.Context(), func(*WriteTx) error { close(entered); <-release; return nil })
+			done <- store.Update(t.Context(), func(*storage.WriteTx) error { close(entered); <-release; return nil })
 		}()
 		<-entered
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		called := false
-		err := store.Update(ctx, func(*WriteTx) error { called = true; return nil })
+		err := store.Update(ctx, func(*storage.WriteTx) error { called = true; return nil })
 		close(release)
 		if firstErr := <-done; firstErr != nil {
 			t.Fatal(firstErr)
@@ -345,7 +346,7 @@ func TestStorageCrashHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, _ := app.Storage("test")
-	_ = store.Update(t.Context(), func(tx *WriteTx) error {
+	_ = store.Update(t.Context(), func(tx *storage.WriteTx) error {
 		if err := tx.Set("committed", []byte("unfinished")); err != nil {
 			t.Fatal(err)
 		}
@@ -360,7 +361,7 @@ func TestStorageCrashHelper(t *testing.T) {
 
 func TestStorageCrashPreservesCommittedData(t *testing.T) {
 	a, store := testStorage(t)
-	if err := store.Update(t.Context(), func(tx *WriteTx) error { return tx.Set("committed", []byte("original")) }); err != nil {
+	if err := store.Update(t.Context(), func(tx *storage.WriteTx) error { return tx.Set("committed", []byte("original")) }); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.closeStorage(); err != nil {
@@ -380,34 +381,17 @@ func TestStorageCrashPreservesCommittedData(t *testing.T) {
 	if err := a.openStorage(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.View(t.Context(), func(tx *ReadTx) error {
+	if err := store.View(t.Context(), func(tx *storage.ReadTx) error {
 		value, err := tx.Get("committed")
 		if err != nil || string(value) != "original" {
 			t.Fatalf("committed value = %q, %v", value, err)
 		}
 		_, err = tx.Get("partial")
-		if !errors.Is(err, ErrNotFound) {
+		if !errors.Is(err, storage.ErrNotFound) {
 			t.Fatalf("partial change visible: %v", err)
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestStorageCommitFailureDoesNotReplay(t *testing.T) {
-	_, store := testStorage(t)
-	calls := 0
-	err := store.Update(t.Context(), func(tx *WriteTx) error {
-		calls++
-		// End the underlying transaction to inject a COMMIT failure at the SQL boundary.
-		_, err := tx.state.conn.ExecContext(t.Context(), "ROLLBACK")
-		return err
-	})
-	if !errors.Is(err, ErrCommitUncertain) || calls != 1 {
-		t.Fatalf("commit error = %v, attempts = %d", err, calls)
-	}
-	if err := store.Update(t.Context(), func(tx *WriteTx) error { return tx.Set("healthy", nil) }); err != nil {
-		t.Fatalf("connection pool did not recover: %v", err)
 	}
 }

@@ -17,6 +17,9 @@ Service에 비밀값 저장소와 일반 데이터 저장소를 제공한다.
 
 ## SQLite API
 
+- 공개 타입과 오류, JSON 헬퍼는 `storage` 패키지에 둔다. DB 수명 관리는 App 내부 책임이다.
+- `Store.Get / Set / Delete / List`는 각 호출을 하나의 transaction으로 실행한다.
+- `storage.GetJSON[T] / SetJSON`은 encoding/json을 사용한다. 인코딩 실패 시 기존 값은 유지하며, 디코딩 실패 시 T의 zero value와 오류를 반환한다.
 - `app.Storage(namespace)`는 파일 접근 없이 namespace 핸들을 만든다. Service 필드로 명시적으로 주입한다.
 - App은 Service Startup 전에 DB를 열고 Shutdown 후 닫는다. 핸들에는 Close를 제공하지 않는다.
 - `View(ctx, func(*ReadTx) error)`는 읽기 snapshot을 제공한다. ReadTx는 Get / List를 제공한다.

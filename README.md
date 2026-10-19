@@ -51,7 +51,7 @@ flowchart TB
 | App | Validate services, hold the runtime lock, order initialization and cleanup | [app.go](app.go), [service.go](service.go) |
 | Client / RPC server | Match request IDs, encode results and errors, manage concurrency, cancellation, and limits | [client.go](client.go), [rpc_server.go](rpc_server.go) |
 | Transport / execution ownership | Enforce OS-user access, establish local connections, verify process identity and execution generation | [transport.go](transport.go), [execution.go](execution.go) |
-| Storage | App-owned SQLite lifetime, namespace isolation, snapshots and atomic writes | [storage.go](storage.go) |
+| Storage | App-owned SQLite lifetime, namespace isolation, snapshots and atomic writes | [storage](storage/) · [lifetime](storage.go) |
 | Application Service | Enforce business rules, protect shared state, observe cancellation, create and release its resources | [ClockService example](examples/foreground/clock.go) |
 
 Register a Service as a pointer to a named struct. Exported application methods use
@@ -169,3 +169,23 @@ sequenceDiagram
 - Messages are limited to 64 KiB. Each Client allows up to 64 pending calls; the server allows up to 64 active requests across all connections.
 - Errors carry `code`, `message`, and optional `data`. Programs should branch on codes and structured data, not message strings.
 - Cancellation adopts LSP's `$/cancelRequest` and `-32800` as extensions. Overload `-32001` and shutdown rejection `-32600` with `data.reason` follow Codex conventions. These are framework contracts, not a claim of full LSP compliance.
+
+### Storage
+
+The App owns the database lifetime. Inject a namespace handle into each service;
+handles have no Close method. Use View or Update when several operations must
+share a transaction.
+
+```go
+store, err := app.Storage("workspace")
+if err != nil {
+    return err
+}
+// Inside Startup, an RPC method, or Shutdown:
+err = storage.SetJSON(ctx, store, "preferences", Preferences{Theme: "dark"})
+prefs, err := storage.GetJSON[Preferences](ctx, store, "preferences")
+```
+
+Import `github.com/134130/go-daemonkit/storage` for Store, transaction types,
+errors, and JSON helpers. Store also provides Get, Set, Delete, and List for raw
+bytes. JSON helpers use encoding/json; a missing key returns storage.ErrNotFound.
