@@ -25,6 +25,9 @@ flowchart TB
         App["App<br/>Registration · runtime lock · lifecycle"]
         RPC["RPC server<br/>Routing · concurrency · cancellation"]
         Service["Application Service<br/>Business logic · validation · synchronization"]
+        Storage["Storage<br/>Namespaced SQLite KV · View / Update"]
+        App -->|"Open before Startup, close after Shutdown"| Storage
+        Service -->|"Explicit field injection"| Storage
         Resources["Service-owned resources<br/>Background workers · files · external connections"]
         App -->|"Startup / Shutdown · optional"| Service
         App -->|"Accept connections after initialization"| RPC
@@ -32,13 +35,14 @@ flowchart TB
         Service --> Resources
     end
 
-    State["Instance directory<br/>Releases · execution records · daemon.log"]
+    State["Instance directory<br/>Releases · execution records · storage.sqlite · daemon.log"]
     Manager -->|"Spawn detached process when needed"| App
     Manager <-->|"Handshake / shutdown"| IPC
     Client <-->|"Application requests / responses"| IPC
     IPC <--> RPC
     Manager --> State
     App --> State
+    Storage --> State
 ```
 
 | Component | Responsibility | Code |
@@ -47,6 +51,7 @@ flowchart TB
 | App | Validate services, hold the runtime lock, order initialization and cleanup | [app.go](app.go), [service.go](service.go) |
 | Client / RPC server | Match request IDs, encode results and errors, manage concurrency, cancellation, and limits | [client.go](client.go), [rpc_server.go](rpc_server.go) |
 | Transport / execution ownership | Enforce OS-user access, establish local connections, verify process identity and execution generation | [transport.go](transport.go), [execution.go](execution.go) |
+| Storage | App-owned SQLite lifetime, namespace isolation, snapshots and atomic writes | [storage.go](storage.go) |
 | Application Service | Enforce business rules, protect shared state, observe cancellation, create and release its resources | [ClockService example](examples/foreground/clock.go) |
 
 Register a Service as a pointer to a named struct. Exported application methods use
@@ -76,6 +81,7 @@ sequenceDiagram
         CLI->>OS: Spawn detached process
         OS->>App: Run the same binary in daemon mode
         App->>OS: Acquire runtime lock and verify stale resource ownership
+        App->>OS: Open and initialize SQLite storage
         App->>S: Startup in registration order
         S-->>App: Required initialization complete
         App->>App: Accept control IPC connections
@@ -93,6 +99,7 @@ sequenceDiagram
     App->>App: Drain active requests, then cancel after grace period
     App->>S: Shutdown in reverse order
     S-->>App: Release owned resources
+    App->>OS: Close SQLite storage
     App->>OS: Remove execution record and release runtime lock
     Note over App,OS: The executable exits after App.Run returns
     CLI->>OS: Confirm the same process generation has exited

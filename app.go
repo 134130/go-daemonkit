@@ -38,6 +38,8 @@ type App struct {
 	services  []registeredService
 	sealed    bool
 	running   bool
+	storageMu sync.Mutex
+	storage   *storageRuntime
 }
 
 // New validates configuration and resolves paths without creating resources.
@@ -150,6 +152,10 @@ func (a *App) Run(ctx context.Context) (err error) {
 		}
 		err = errors.Join(err, removeExecution(a.directory, record))
 	}()
+	if err := a.openStorage(ctx); err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, a.closeStorage()) }()
 	started, startupErr := a.startServices(ctx)
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopGrace)
