@@ -14,7 +14,7 @@ flowchart TB
     subgraph caller["Caller process · CLI / GUI"]
         UI["Application code"]
         Manager["Manager<br/>EnsureRunning · Stop · Restart"]
-        Client["Client<br/>Connect · Call · Close"]
+        Client["Client<br/>Connect · Call · Subscribe · Close"]
         UI --> Manager
         UI --> Client
     end
@@ -38,7 +38,7 @@ flowchart TB
     State["Instance directory<br/>Releases · execution records · storage.sqlite · daemon.log"]
     Manager -->|"Spawn detached process when needed"| App
     Manager <-->|"Handshake / shutdown"| IPC
-    Client <-->|"Application requests / responses"| IPC
+    Client <-->|"Requests / responses / events"| IPC
     IPC <--> RPC
     Manager --> State
     App --> State
@@ -50,6 +50,7 @@ flowchart TB
 | Manager | Serialize start, stop, and restart; prepare releases; confirm readiness and process exit | [manager.go](manager.go), [stop.go](stop.go), [release.go](release.go) |
 | App | Validate services, hold the runtime lock, order initialization and cleanup | [app.go](app.go), [service.go](service.go) |
 | Client / RPC server | Match request IDs, encode results and errors, manage concurrency, cancellation, and limits | [client.go](client.go), [rpc_server.go](rpc_server.go) |
+| Events | Exact-topic subscriptions, ordered delivery, bounded queues and cleanup | [events.go](events.go), [events_server.go](events_server.go) |
 | Transport / execution ownership | Enforce OS-user access, establish local connections, verify process identity and execution generation | [transport.go](transport.go), [execution.go](execution.go) |
 | Storage | App-owned SQLite lifetime, namespace isolation, snapshots and atomic writes | [storage](storage/) · [lifetime](storage.go) |
 | Application Service | Enforce business rules, protect shared state, observe cancellation, create and release its resources | [ClockService example](examples/foreground/clock.go) |
@@ -207,3 +208,50 @@ biometric authentication or protection from process memory inspection. Scope
 names and keys are metadata; namespace isolation is not an authorization boundary
 against other processes running as the same user. See [the API](secrets/secrets.go)
 and [storage contract](doc/05_storage.md).
+
+### Events
+
+Publish JSON values with `app.Publish("clock.tick", tick)`. Inject the publish
+function into a service; it does not need to hold the App. Publish is available
+during Startup through Shutdown, succeeds with no subscribers, and does not wait
+for consumers.
+
+```go
+sub, err := client.Subscribe(ctx, "clock.tick")
+if err != nil {
+    return err
+}
+defer sub.Close()
+
+for {
+    var tick NowResponse
+    if err := sub.Next(ctx, &tick); err != nil {
+        return err
+    }
+    fmt.Println(tick.Time)
+}
+```
+
+Subscribe's context bounds registration; Next's context bounds one read.
+Canceling either does not cancel other calls. Next consumes one event and decodes
+it, like Call; call Next sequentially. Invalid destination pointers do not consume
+an event, while JSON decode failures do. Close is idempotent and sends an
+unsubscribe notification without waiting for acknowledgment.
+
+Subscriptions receive events from server registration onward, including events
+queued while its reply is in flight; earlier events are not replayed. Each
+subscription preserves publication order, including concurrent publishes as
+serialized by the server. Topic names are exact, case-sensitive identifiers of
+at most 64 characters (letters, digits, dot, underscore and hyphen).
+
+Both ends buffer at most 16 events per subscription. Overflow discards queued
+events and terminates that subscription with ErrEventOverflow. Each connection
+allows 32 subscriptions; the server allows 256 active subscription workers.
+Messages retain the 64 KiB limit. The shared reader never waits for event
+consumers. A socket write failure or timeout closes the connection, affecting
+its RPC calls and other subscriptions too. An unsubscribe write failure also
+closes the connection so the server can reclaim registrations.
+
+There is no replay, automatic resubscription, wildcard matching, or progress API.
+After reconnecting, callers explicitly subscribe again. Try `foreground watch`
+with the foreground example running to receive a clock event every five seconds.

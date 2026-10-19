@@ -45,12 +45,31 @@
 - 서버는 초기화 deadline 안에 `initialized`가 도착하지 않으면 해당 연결을 종료한다. 클라이언트의 대기 취소·timeout도 해당 연결만 종료한다.
 - 함께 사용할 연결의 `launchNonce`가 다르면 해당 연결들을 닫고 다시 연결한다.
 
+### Events
+
+- 공개 API는 `App.Publish(topic, payload)`, `Client.Subscribe(ctx, topic)`, `Subscription.Next(ctx, dst)`, `Subscription.Close()`다.
+- Topic은 최대 64자의 이름이며 정확히 일치하는 구독에만 전달한다. 별도 typed Topic이나 범용 내부 Bus는 제공하지 않는다.
+- 클라이언트가 subscription ID를 생성하고 로컬 큐를 등록한 다음 `$/subscribe` 요청을 보낸다. Params는 `{subscription, topic}`, 성공 결과는 `{}`다.
+- 서버 등록 이후 이벤트를 큐에 넣으며, 등록 응답을 보낸 뒤 이벤트 전송을 시작한다. 등록 전 이벤트는 재전송하지 않는다.
+- 이벤트는 `$/event` notification이며 Params는 `{subscription, payload}`다. Overflow 종료는 `{subscription, error: "overflow"}`다.
+- 해제는 `$/unsubscribe` notification이며 Params는 `{subscription}`다. 없는 ID의 해제는 성공한다. ID는 연결 내부에서만 유효하다.
+- Publish는 Service Startup부터 Shutdown까지 가능하며, Run 외부에서는 ErrEventsClosed를 반환한다. 구독자가 없어도 성공한다.
+- Publish는 JSON 직렬화 후 큐에 넣고 소비자를 기다리지 않는다. 동시 Publish는 서버에서 직렬화하며 구독별 순서를 유지한다.
+- Subscribe의 ctx는 등록 대기에만, Next의 ctx는 한 번의 읽기 대기에만 적용한다. 구독은 Close 또는 연결 종료까지 유지한다.
+- Next는 순차 호출한다. 잘못된 destination pointer는 이벤트를 소비하지 않는다. 디코딩 실패는 해당 이벤트만 소비하고 구독을 유지한다.
+- 양쪽의 구독별 큐는 16개로 제한한다. 초과 시 큐를 버리고 해당 구독을 ErrEventOverflow로 종료한다.
+- 연결별 구독은 32개, 서버 전체 송신 작업은 256개로 제한한다. 종료 중인 송신 작업도 완료 전까지 한도에 포함한다.
+- 각 메시지는 기존 64 KiB 한도를 따른다. 공통 reader는 소비자를 기다리지 않고 구독 큐로 분배한다.
+- Close는 반복 호출 가능하며 서버 acknowledgment를 기다리지 않는다. 해제 전송 실패 시 연결을 닫아 서버 자원을 회수한다.
+- 소켓 쓰기 실패·timeout은 연결 전체를 종료한다. 해당 연결의 RPC와 다른 구독도 실패한다.
+- 연결 종료 시 서버 구독과 송신 작업을 정리한다. 자동 재연결·재구독·재전송은 제공하지 않는다.
+- 기존 RPC에 대한 호환 확장이므로 Protocol 버전은 유지한다. 구독 미지원 서버는 method-not-found를 반환한다.
+
 ## 미확정 사항
 
 - 기본 연결 개수와 stream 분리 기준.
-- 취소·구독 메서드 및 오류 코드, Batch 처리 규칙.
+- Batch 처리 규칙.
 - 초기화 timeout 값.
-- 재연결·재구독·이벤트 유실 및 재전송 정책.
 - 각 제한값과 heartbeat·timeout 정책.
 
 ## 챙길 내용

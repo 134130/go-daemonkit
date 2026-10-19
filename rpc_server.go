@@ -23,6 +23,7 @@ type rpcMethod struct {
 
 type rpcServer struct {
 	methods  map[string]rpcMethod
+	events   *eventHub
 	mu       sync.Mutex
 	stopping bool
 	active   int
@@ -49,6 +50,8 @@ func newRPCServer(services []registeredService) *rpcServer {
 func (s *rpcServer) serve(ctx context.Context, conn *websocket.Conn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	events := newEventSession(ctx, conn, s)
+	defer events.close()
 	var pendingMu sync.Mutex
 	pending := make(map[string]context.CancelFunc)
 	for {
@@ -60,6 +63,12 @@ func (s *rpcServer) serve(ctx context.Context, conn *websocket.Conn) {
 		if request.Method == "initialize" || request.Method == "initialized" || request.Method == "" || request.Error != nil || len(request.Result) != 0 || len(request.ID) != 0 && !validRequestID(request.ID) {
 			_ = rejectHandshake(ctx, conn, request, -32600, "invalid request or initialization sequence")
 			return
+		}
+		if request.Method == unsubscribeMethod && len(request.ID) == 0 {
+			if err := events.handle(request); err != nil {
+				return
+			}
+			continue
 		}
 		if request.Method == cancelRPCMethod && len(request.ID) == 0 {
 			var params struct {
@@ -75,7 +84,7 @@ func (s *rpcServer) serve(ctx context.Context, conn *websocket.Conn) {
 			pendingMu.Unlock()
 			continue
 		}
-		// Only cancellation notifications are handled; application methods require IDs.
+		// Application methods and subscription registration require request IDs.
 		if len(request.ID) == 0 {
 			continue
 		}
@@ -86,6 +95,12 @@ func (s *rpcServer) serve(ctx context.Context, conn *websocket.Conn) {
 		if duplicate {
 			_ = replyRPCError(ctx, conn, request.ID, &RPCError{Code: -32600, Message: "duplicate request ID"})
 			return
+		}
+		if request.Method == subscribeMethod || request.Method == unsubscribeMethod {
+			if err := events.handle(request); err != nil {
+				return
+			}
+			continue
 		}
 		if request.Method == "shutdown" {
 			if !emptyParams(request.Params) {

@@ -18,15 +18,16 @@ var ErrClientClosed = errors.New("daemon client closed")
 
 // Client multiplexes calls over one connection. It is safe for concurrent use.
 type Client struct {
-	conn    *websocket.Conn
-	ctx     context.Context
-	cancel  context.CancelFunc
-	writes  chan struct{}
-	mu      sync.Mutex
-	next    uint64
-	pending map[string]chan rpcMessage
-	err     error
-	done    chan struct{}
+	conn          *websocket.Conn
+	ctx           context.Context
+	cancel        context.CancelFunc
+	writes        chan struct{}
+	mu            sync.Mutex
+	next          uint64
+	pending       map[string]chan rpcMessage
+	subscriptions map[string]*Subscription
+	err           error
+	done          chan struct{}
 }
 
 // Connect connects to an existing daemon. It never starts or replaces a process.
@@ -56,6 +57,13 @@ func (c *Client) Call(ctx context.Context, method string, request, response any)
 	}
 	if !strings.Contains(method, ".") {
 		return fmt.Errorf("RPC method must be Service.Method")
+	}
+	return c.call(ctx, method, request, response)
+}
+
+func (c *Client) call(ctx context.Context, method string, request, response any) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	target := reflect.ValueOf(response)
 	if !target.IsValid() || target.Kind() != reflect.Pointer || target.IsNil() {
@@ -147,6 +155,13 @@ func (c *Client) read() {
 			c.fail(err)
 			return
 		}
+		if message.Method == eventMethod {
+			if err := c.receiveEvent(message); err != nil {
+				c.fail(err)
+				return
+			}
+			continue
+		}
 		var id string
 		if message.Method != "" || len(message.Params) != 0 || json.Unmarshal(message.ID, &id) != nil || (message.Error == nil) == (len(message.Result) == 0) {
 			c.fail(errors.New("invalid RPC response"))
@@ -167,6 +182,10 @@ func (c *Client) fail(err error) {
 	if c.err == nil {
 		c.err = err
 		c.cancel()
+		for _, sub := range c.subscriptions {
+			sub.queue.finish(err)
+		}
+		c.subscriptions = nil
 	}
 	c.mu.Unlock()
 	_ = c.conn.CloseNow()

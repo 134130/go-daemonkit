@@ -16,12 +16,30 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if len(os.Args) == 2 && os.Args[1] == "now" {
+	if len(os.Args) == 2 && (os.Args[1] == "now" || os.Args[1] == "watch") {
 		client, err := daemon.Connect(ctx, options)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer client.Close()
+		if os.Args[1] == "watch" {
+			sub, err := client.Subscribe(ctx, "clock.tick")
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer sub.Close()
+			for {
+				var tick NowResponse
+				if err := sub.Next(ctx, &tick); err != nil {
+					if errors.Is(err, context.Canceled) {
+						return
+					}
+					log.Print(err)
+					return
+				}
+				log.Print(tick.Time)
+			}
+		}
 		var response NowResponse
 		if err := client.Call(ctx, "ClockService.Now", NowRequest{}, &response); err != nil {
 			log.Fatal(err)
@@ -48,13 +66,13 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 && (len(os.Args) != 2 || os.Args[1] != "daemon") {
-		log.Fatal("usage: foreground [start|stop|restart|now|daemon]")
+		log.Fatal("usage: foreground [start|stop|restart|now|watch|daemon]")
 	}
 	app, err := daemon.New(options)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := app.Register(&ClockService{}); err != nil {
+	if err := app.Register(&ClockService{publish: func(tick NowResponse) error { return app.Publish("clock.tick", tick) }}); err != nil {
 		log.Fatal(err)
 	}
 	if err := app.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

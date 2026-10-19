@@ -40,6 +40,7 @@ type App struct {
 	sealed    bool
 	running   bool
 	storage   storageimpl.Database
+	events    eventHub
 }
 
 // New validates configuration and resolves paths without creating resources.
@@ -156,6 +157,8 @@ func (a *App) Run(ctx context.Context) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, a.closeStorage()) }()
+	a.events.start()
+	defer a.events.close()
 	started, startupErr := a.startServices(ctx)
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopGrace)
@@ -173,6 +176,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 	defer cancel()
 	identity := initializeResult{a.options.AppID, a.options.InstanceID, protocolVersion, a.options.Version, record.LaunchNonce}
 	rpc := newRPCServer(a.services)
+	rpc.events = &a.events
 	var mu sync.Mutex
 	var handlers sync.WaitGroup
 	active := 0

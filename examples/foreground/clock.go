@@ -9,8 +9,9 @@ import (
 
 // ClockService owns its background worker from Startup through Shutdown.
 type ClockService struct {
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	publish func(NowResponse) error
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 }
 
 func (s *ClockService) Startup(ctx context.Context) error {
@@ -26,6 +27,11 @@ func (s *ClockService) Startup(ctx context.Context) error {
 				return
 			case now := <-ticker.C:
 				log.Printf("clock: %s", now.Format(time.RFC3339))
+				if s.publish != nil {
+					if err := s.publish(NowResponse{Time: now}); err != nil {
+						log.Printf("clock publish: %v", err)
+					}
+				}
 			}
 		}
 	})
