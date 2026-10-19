@@ -90,7 +90,7 @@ sequenceDiagram
     CLI->>App: Verify ownership and handshake, then send shutdown
     App->>App: Reject new application requests
     App-->>CLI: Acknowledge shutdown acceptance
-    App->>App: Drain active requests; cancel after grace period
+    App->>App: Drain active requests, then cancel after grace period
     App->>S: Shutdown in reverse order
     S-->>App: Release owned resources
     App->>OS: Remove execution record and release runtime lock
