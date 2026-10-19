@@ -189,3 +189,21 @@ prefs, err := storage.GetJSON[Preferences](ctx, store, "preferences")
 Import `github.com/134130/go-daemonkit/storage` for Store, transaction types,
 errors, and JSON helpers. Store also provides Get, Set, Delete, and List for raw
 bytes. JSON helpers use encoding/json; a missing key returns storage.ErrNotFound.
+
+### Secrets
+
+Use `app.Secrets("oauth")` to obtain a `*secrets.Store` and inject it into a
+service. Get, Set, and Delete accept a context; values are opaque bytes, limited
+to 2,560 bytes. The OS owns the store, so handles do not require App.Run and have
+no Close method. Read required credentials in Startup to make access failures
+prevent readiness.
+
+Secrets use macOS Keychain (requires cgo), Linux Secret Service over the session
+D-Bus, or Windows Credential Manager. There is no plaintext file fallback.
+Native calls may prompt or block and cannot be interrupted by context cancellation.
+
+This protects stored credentials according to OS policy. It does not guarantee
+biometric authentication or protection from process memory inspection. Scope
+names and keys are metadata; namespace isolation is not an authorization boundary
+against other processes running as the same user. See [the API](secrets/secrets.go)
+and [storage contract](doc/05_storage.md).

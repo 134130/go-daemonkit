@@ -31,11 +31,30 @@ Service에 비밀값 저장소와 일반 데이터 저장소를 제공한다.
 - 키는 NUL 없는 UTF-8이며 최대 1 KiB, 값은 최대 1 MiB다. List는 prefix와 일치하는 키를 정렬해서 반환하며, 1,000개 초과 시 부분 결과 없이 `ErrStorageLimit`을 반환한다.
 - 인스턴스별 `storage.sqlite`를 사용한다. modernc.org/sqlite, WAL, synchronous FULL이며 손상 시 빈 DB로 재생성하지 않는다.
 
-## 미확정 사항
+## Secrets API
 
-- OS별 keychain backend.
-- Keychain 없는 환경과 잠긴 keychain 처리.
-- Secrets 초기화와 Service Readiness의 관계.
+- `app.Secrets(namespace)` returns a `*secrets.Store` without accessing the OS store. Inject the handle explicitly.
+- The OS owns the credential store lifetime. Handles work outside App.Run and have no Close method.
+- Get / Set / Delete operate on opaque bytes. Missing Get returns ErrNotFound; missing Delete succeeds.
+- Keys are nonempty UTF-8 without NUL, at most 1 KiB. Values may be empty and are limited to 2,560 bytes for Windows portability.
+- macOS uses native Keychain Services through go-keychain and requires cgo. Linux uses Secret Service over the session D-Bus; Windows uses Credential Manager through go-keyring.
+- Unsupported builds, including macOS without cgo, return ErrUnavailable. No plaintext file fallback is provided.
+- Known native failures map to ErrUnavailable, ErrPermission, ErrInteractionRequired or ErrCanceled. Unclassified failures return ErrAccess; they are not treated as missing secrets or assumed to mean the store is locked. Native error payloads are not exposed.
+- Access is lazy. Services that require credentials read them during Startup; failures then prevent readiness.
+- OS access may prompt or block. Context cancellation is checked before entry, but cannot interrupt an in-flight native call. Completed writes report their actual result; failed writes do not guarantee an unchanged value.
+
+### Security boundary
+
+Protection is provided by the OS at rest, subject to its access policy. This API
+does not require biometric authentication, provide hardware-backed signing, or
+protect plaintext against process memory inspection. Values and backend copies
+may remain in memory; clearing a returned slice does not erase every copy.
+
+Scope names and keys are metadata, not secrets. App, instance and namespace
+separation prevents naming collisions; it is not an authorization boundary
+against other processes running as the same user. Values are never logged or
+included in framework diagnostics. Applications remain responsible for how they
+use and expose returned values.
 
 ## 첫 완료 기준
 
