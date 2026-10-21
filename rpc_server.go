@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"sync"
 	"time"
 
@@ -17,8 +16,7 @@ const maxRPCRequests = 64
 const cancelRPCMethod = "$/cancelRequest"
 
 type rpcMethod struct {
-	call  reflect.Value
-	input reflect.Type
+	call func(context.Context, json.RawMessage) (any, error)
 }
 
 type rpcServer struct {
@@ -31,20 +29,8 @@ type rpcServer struct {
 	stop     chan struct{}
 }
 
-func newRPCServer(services []registeredService) *rpcServer {
-	server := &rpcServer{methods: make(map[string]rpcMethod), stop: make(chan struct{})}
-	for _, service := range services {
-		value := reflect.ValueOf(service.value)
-		for i := range value.NumMethod() {
-			name := value.Type().Method(i).Name
-			if name == "Startup" || name == "Shutdown" {
-				continue
-			}
-			method := value.Method(i)
-			server.methods[service.name+"."+name] = rpcMethod{method, method.Type().In(1)}
-		}
-	}
-	return server
+func newRPCServer(methods map[string]rpcMethod) *rpcServer {
+	return &rpcServer{methods: methods, stop: make(chan struct{})}
 }
 
 func (s *rpcServer) serve(ctx context.Context, conn *websocket.Conn) {
@@ -202,16 +188,8 @@ func (m rpcMethod) invoke(ctx context.Context, params json.RawMessage) (result j
 	if json.Unmarshal(params, &object) != nil || object == nil {
 		return nil, &RPCError{Code: -32602, Message: "parameters must be a JSON object"}
 	}
-	input := reflect.New(m.input)
-	if json.Unmarshal(params, input.Interface()) != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid parameters"}
-	}
-	if ctx.Err() != nil {
-		return nil, &RPCError{Code: -32800, Message: "request canceled"}
-	}
-	values := m.call.Call([]reflect.Value{reflect.ValueOf(ctx), input.Elem()})
-	if !values[1].IsNil() {
-		err := values[1].Interface().(error)
+	value, err := m.call(ctx, params)
+	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, &RPCError{Code: -32800, Message: "request canceled"}
 		}
@@ -221,7 +199,7 @@ func (m rpcMethod) invoke(ctx context.Context, params json.RawMessage) (result j
 		}
 		return nil, &RPCError{Code: -32000, Message: err.Error()}
 	}
-	result, err := json.Marshal(values[0].Interface())
+	result, err = json.Marshal(value)
 	if err != nil {
 		return nil, &RPCError{Code: -32603, Message: "result cannot be encoded"}
 	}

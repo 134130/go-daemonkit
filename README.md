@@ -14,7 +14,7 @@ flowchart TB
     subgraph caller["Caller process · CLI / GUI"]
         UI["Application code"]
         Manager["Manager<br/>EnsureRunning · Stop · Restart · Update"]
-        Client["Client<br/>Connect · Call · Subscribe · Close"]
+        Client["Client<br/>Connect · Invoke / Call · Subscribe · Close"]
         UI --> Manager
         UI --> Client
     end
@@ -22,7 +22,7 @@ flowchart TB
     IPC["Local IPC<br/>JSON-RPC 2.0 / WebSocket<br/>UDS or Named Pipe"]
 
     subgraph daemon["Daemon process · managed release executable"]
-        App["App<br/>Registration · runtime lock · lifecycle"]
+        App["App<br/>Register / Handle · runtime lock · lifecycle"]
         RPC["RPC server<br/>Routing · concurrency · cancellation"]
         Service["Application Service<br/>Business logic · validation · synchronization"]
         Storage["Storage<br/>Namespaced SQLite KV · View / Update"]
@@ -49,16 +49,48 @@ flowchart TB
 | --- | --- | --- |
 | Manager | Serialize lifecycle operations; select releases; verify updates and recover interrupted transitions | [manager.go](manager.go), [stop.go](stop.go), [update.go](update.go), [release.go](release.go) |
 | App | Validate services, hold the runtime lock, order initialization and cleanup | [app.go](app.go), [service.go](service.go) |
-| Client / RPC server | Match request IDs, encode results and errors, manage concurrency, cancellation, and limits | [client.go](client.go), [rpc_server.go](rpc_server.go) |
+| Client / RPC server | Match request IDs, encode results and errors, manage concurrency, cancellation, and limits | [client.go](client.go), [method.go](method.go), [rpc_server.go](rpc_server.go) |
 | Events | Exact-topic subscriptions, ordered delivery, bounded queues and cleanup | [events.go](events.go), [events_server.go](events_server.go) |
 | Transport / execution ownership | Enforce OS-user access, establish local connections, verify process identity and execution generation | [transport.go](transport.go), [execution.go](execution.go) |
 | Storage | App-owned SQLite lifetime, namespace isolation, snapshots and atomic writes | [storage](storage/) · [lifetime](storage.go) |
 | Application Service | Enforce business rules, protect shared state, observe cancellation, create and release its resources | [ClockService example](examples/foreground/clock.go) |
 
-Register a Service as a pointer to a named struct. Exported application methods use
-`Method(context.Context, Request) (Response, error)`, where Request and Response are named struct values.
-`Startup(context.Context) error` and `Shutdown(context.Context) error` are independently optional hooks, never RPC methods.
-The framework shares each Service instance across requests, so its methods may run concurrently.
+Register a Service as a pointer to a named struct for lifecycle management only.
+`Startup(context.Context) error` and `Shutdown(context.Context) error` are independently optional.
+Other service methods are unrestricted and are not exposed automatically.
+
+Declare public DTOs and a stable RPC name in a shared contract package:
+
+```go
+var Now = daemon.NewMethod[NowRequest, NowResponse]("clock.now")
+```
+
+Expose a handler explicitly and invoke the same contract from a client:
+
+```go
+if err := app.Register(service); err != nil {
+    return err
+}
+if err := app.Handle(clockapi.Now, service.Now); err != nil {
+    return err
+}
+result, err := client.Invoke(ctx, clockapi.Now, clockapi.NowRequest{})
+```
+
+`Handle` accepts `func(context.Context, Request) (Response, error)`; generic type
+inference checks its signature against the contract. Request and Response must be
+named struct values, and may be reused across operations. Handlers can be free
+functions or closures without a registered lifecycle participant.
+
+RPC names are independent of Go package, type, and implementation method names.
+Duplicate names, nil handlers, and registration after Run begins are rejected.
+`initialize`, `initialized`, `shutdown`, and the `$/` and `rpc.` prefixes are reserved.
+`Invoke` returns a zero response on error. The raw `Call` API remains available.
+Handlers may run concurrently and must observe cancellation. Applications own DTO
+semantics and JSON field compatibility; the framework does not negotiate schemas.
+
+See the separate [clock contract](examples/foreground/clockapi/clock.go) and
+[service implementation](examples/foreground/clock.go). No generator is required.
 
 ## 2. Process lifecycle and OS boundaries
 

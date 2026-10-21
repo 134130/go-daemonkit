@@ -74,7 +74,7 @@
 
 ## 챙길 내용
 
-- Service 등록·공개 메서드 범위·초기화 및 종료 훅 연결.
+- Explicit RPC contracts and handler registration are defined in [Developer Experience](04_developer_experience.md). Lifecycle registration does not expose methods.
 - 요청·응답 형식, 오류 표현, 직렬화, 입력 크기 제한과 검증.
 - OS별 로컬 소켓·Named Pipe 접근 제어 구현과 검증.
 - 요청별 식별자·Deadline·Cancellation. 취소는 서버 작업의 협조적 중단이며 롤백 아님.

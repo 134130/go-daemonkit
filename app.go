@@ -37,6 +37,7 @@ type App struct {
 	endpoint  string
 	serviceMu sync.Mutex
 	services  []registeredService
+	methods   map[string]rpcMethod
 	sealed    bool
 	running   bool
 	storage   storageimpl.Database
@@ -177,7 +178,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	identity := initializeResult{a.options.AppID, a.options.InstanceID, protocolVersion, a.options.Version, record.LaunchNonce}
-	rpc := newRPCServer(a.services)
+	rpc := newRPCServer(a.methods)
 	rpc.events = &a.events
 	var mu sync.Mutex
 	var handlers sync.WaitGroup

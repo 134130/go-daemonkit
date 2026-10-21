@@ -20,14 +20,12 @@ type registeredService struct {
 	value any
 }
 
-// Register accepts a non-nil pointer to a named struct. Its exported methods,
-// except Startup and Shutdown, must have the form
-// Method(context.Context, Request) (Response, error), with named struct values.
+// Register adds a lifecycle participant, a non-nil pointer to a named struct.
+// Startup(context.Context) error and Shutdown(context.Context) error are optional.
+// Other methods are unrestricted and never exposed automatically; use Handle.
 // Registration validates only; hooks run during Run. Names must be unique.
-// Optional Startup(context.Context) error and Shutdown(context.Context) error
-// hooks are reserved and are never RPC methods. Startup owns partial cleanup
-// on failure. Shutdown hooks share a five-second deadline and must honor it.
-// Registration is permanently closed once Run begins.
+// Startup owns partial cleanup on failure. Shutdown hooks share a five-second
+// deadline and must honor it. Registration is permanently closed once Run begins.
 func (a *App) Register(service any) error {
 	a.serviceMu.Lock()
 	defer a.serviceMu.Unlock()
@@ -45,25 +43,17 @@ func (a *App) Register(service any) error {
 		}
 	}
 	ctxType, errType := reflect.TypeFor[context.Context](), reflect.TypeFor[error]()
-	for i := range typ.NumMethod() {
-		method := typ.Method(i)
-		signature := method.Type
-		if method.Name == "Startup" || method.Name == "Shutdown" {
+	for _, name := range []string{"Startup", "Shutdown"} {
+		if method, ok := typ.MethodByName(name); ok {
+			signature := method.Type
 			if signature.NumIn() != 2 || signature.In(1) != ctxType || signature.NumOut() != 1 || signature.Out(0) != errType || signature.IsVariadic() {
-				return fmt.Errorf("%s.%s must have signature (context.Context) error", name, method.Name)
+				return fmt.Errorf("%s.%s must have signature (context.Context) error", typ.Elem().Name(), name)
 			}
-			continue
-		}
-		if signature.IsVariadic() || signature.NumIn() != 3 || signature.In(1) != ctxType || signature.NumOut() != 2 || signature.Out(1) != errType || !namedStruct(signature.In(2)) || !namedStruct(signature.Out(0)) {
-			return fmt.Errorf("%s.%s must have signature (context.Context, Request) (Response, error) with named struct values", name, method.Name)
 		}
 	}
+
 	a.services = append(a.services, registeredService{name, service})
 	return nil
-}
-
-func namedStruct(typ reflect.Type) bool {
-	return typ.Kind() == reflect.Struct && typ.Name() != ""
 }
 
 // Hooks must honor their contexts; arbitrary Go code cannot be forcibly stopped.

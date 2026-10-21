@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	daemon "github.com/134130/go-daemonkit"
+	"github.com/134130/go-daemonkit/examples/foreground/clockapi"
 )
 
 func main() {
@@ -29,7 +30,7 @@ func main() {
 			}
 			defer sub.Close()
 			for {
-				var tick NowResponse
+				var tick clockapi.NowResponse
 				if err := sub.Next(ctx, &tick); err != nil {
 					if errors.Is(err, context.Canceled) {
 						return
@@ -40,8 +41,8 @@ func main() {
 				log.Print(tick.Time)
 			}
 		}
-		var response NowResponse
-		if err := client.Call(ctx, "ClockService.Now", NowRequest{}, &response); err != nil {
+		response, err := client.Invoke(ctx, clockapi.Now, clockapi.NowRequest{})
+		if err != nil {
 			log.Fatal(err)
 		}
 		log.Print(response.Time)
@@ -75,7 +76,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := app.Register(&ClockService{publish: func(tick NowResponse) error { return app.Publish("clock.tick", tick) }}); err != nil {
+	service := &ClockService{publish: func(tick clockapi.NowResponse) error { return app.Publish("clock.tick", tick) }}
+	if err := app.Register(service); err != nil {
+		log.Fatal(err)
+	}
+	if err := app.Handle(clockapi.Now, service.Now); err != nil {
 		log.Fatal(err)
 	}
 	if err := app.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

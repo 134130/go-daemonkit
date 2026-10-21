@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -47,7 +46,7 @@ func Connect(ctx context.Context, options Options) (*Client, error) {
 	return client, nil
 }
 
-// Call invokes Service.Method with a JSON object and decodes the result into a
+// Call invokes an explicit RPC name with a JSON object and decodes the result into a
 // non-nil pointer. Cancellation is cooperative and does not roll back side effects.
 // Cancellation may wait for an in-flight write and best-effort cancel delivery;
 // each transport write, including waiting for the writer, is bounded to five seconds.
@@ -55,8 +54,8 @@ func (c *Client) Call(ctx context.Context, method string, request, response any)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !strings.Contains(method, ".") {
-		return fmt.Errorf("RPC method must be Service.Method")
+	if !validRPCMethod(method) {
+		return fmt.Errorf("invalid or reserved RPC method name")
 	}
 	return c.call(ctx, method, request, response)
 }

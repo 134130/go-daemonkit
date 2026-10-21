@@ -68,7 +68,7 @@ func (s *shutdownOnlyService) Shutdown(context.Context) error { s.called = true;
 
 func TestServiceRegistration(t *testing.T) {
 	a := testApp(t)
-	for _, value := range []any{nil, (*rpcOnlyService)(nil), rpcOnlyService{}, &struct{}{}, &badRPCService{}, &badHookService{}, &pointerRequestService{}} {
+	for _, value := range []any{nil, (*rpcOnlyService)(nil), rpcOnlyService{}, &struct{}{}, &badHookService{}} {
 		if err := a.Register(value); err == nil {
 			t.Errorf("accepted %T", value)
 		}
@@ -81,6 +81,11 @@ func TestServiceRegistration(t *testing.T) {
 	}
 	if err := a.Register(&rpcOnlyService{}); err == nil {
 		t.Fatal("accepted duplicate name")
+	}
+	for _, service := range []any{&badRPCService{}, &pointerRequestService{}} {
+		if err := a.Register(service); err != nil {
+			t.Fatalf("internal methods restricted: %v", err)
+		}
 	}
 	startup, shutdown := &startupOnlyService{}, &shutdownOnlyService{}
 	if err := a.Register(startup); err != nil {

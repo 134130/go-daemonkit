@@ -56,6 +56,24 @@ func testRPC(t *testing.T) (*App, *Client, *rpcTestService) {
 	if err := a.Register(service); err != nil {
 		t.Fatal(err)
 	}
+	if err := a.Handle(NewMethod[rpcTestRequest, rpcTestResponse]("rpcTestService.Echo"), service.Echo); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Handle(NewMethod[rpcTestRequest, rpcTestResponse]("rpcTestService.Wait"), service.Wait); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Handle(NewMethod[rpcTestRequest, rpcTestResponse]("rpcTestService.Fail"), service.Fail); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Handle(NewMethod[rpcTestRequest, rpcTestResponse]("rpcTestService.Panic"), service.Panic); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Handle(NewMethod[rpcTestRequest, rpcBadResponse]("rpcTestService.BadResult"), service.BadResult); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Handle(NewMethod[rpcTestRequest, rpcTestResponse]("rpcTestService.Denied"), service.Denied); err != nil {
+		t.Fatal(err)
+	}
 	runTestApp(t, a)
 	connectTestApp(t, a)
 	client, err := Connect(t.Context(), a.options)
