@@ -6,3 +6,5 @@ pre-commit:
     - name: golangci-lint
       run: golangci-lint fmt {staged_files}
       stage_fixed: true
+    - name: test
+      run: mise test
