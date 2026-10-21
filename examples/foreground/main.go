@@ -24,14 +24,14 @@ func main() {
 		}
 		defer client.Close()
 		if os.Args[1] == "watch" {
-			sub, err := client.Subscribe(ctx, "clock.tick")
+			sub, err := client.SubscribeTopic(ctx, clockapi.Tick)
 			if err != nil {
 				log.Fatal(err)
 			}
 			defer sub.Close()
 			for {
-				var tick clockapi.NowResponse
-				if err := sub.Next(ctx, &tick); err != nil {
+				tick, err := sub.Next(ctx)
+				if err != nil {
 					if errors.Is(err, context.Canceled) {
 						return
 					}
@@ -76,7 +76,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	service := &ClockService{publish: func(tick clockapi.NowResponse) error { return app.Publish("clock.tick", tick) }}
+	service := &ClockService{publish: func(tick clockapi.NowResponse) error { return app.PublishTopic(clockapi.Tick, tick) }}
 	if err := app.Register(service); err != nil {
 		log.Fatal(err)
 	}

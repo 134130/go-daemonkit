@@ -266,32 +266,37 @@ and [storage contract](doc/05_storage.md).
 
 ### Events
 
-Publish JSON values with `app.Publish("clock.tick", tick)`. Inject the publish
+Declare `clockapi.Tick = daemon.NewTopic[NowResponse]("clock.tick")` in the shared
+contract package. Publish with `app.PublishTopic(clockapi.Tick, tick)`. Inject the publish
 function into a service; it does not need to hold the App. Publish is available
 during Startup through Shutdown, succeeds with no subscribers, and does not wait
 for consumers.
 
 ```go
-sub, err := client.Subscribe(ctx, "clock.tick")
+sub, err := client.SubscribeTopic(ctx, clockapi.Tick)
 if err != nil {
     return err
 }
 defer sub.Close()
 
 for {
-    var tick NowResponse
-    if err := sub.Next(ctx, &tick); err != nil {
+    tick, err := sub.Next(ctx)
+    if err != nil {
         return err
     }
     fmt.Println(tick.Time)
 }
 ```
 
-Subscribe's context bounds registration; Next's context bounds one read.
+SubscribeTopic's context bounds registration; Next's context bounds one read.
 Canceling either does not cancel other calls. Next consumes one event and decodes
-it, like Call; call Next sequentially. Invalid destination pointers do not consume
-an event, while JSON decode failures do. Close is idempotent and sends an
+it; call Next sequentially. Errors return a zero payload; JSON decode failures
+consume the event but leave the subscription active. Close is idempotent and sends an
 unsubscribe notification without waiting for acknowledgment.
+
+The raw `Publish`, `Subscribe`, and `Subscription.Next(ctx, dst)` APIs remain available.
+Typed contracts reuse the same wire protocol and queues; payload schema compatibility
+belongs to the application. Payloads may be any JSON-serializable value.
 
 Subscriptions receive events from server registration onward, including events
 queued while its reply is in flight; earlier events are not replayed. Each

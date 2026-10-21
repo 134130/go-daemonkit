@@ -9,6 +9,8 @@ import (
 
 var Now = daemon.NewMethod[NowRequest, NowResponse]("clock.now")
 
+var Tick = daemon.NewTopic[NowResponse]("clock.tick")
+
 type NowRequest struct{}
 
 type NowResponse struct {

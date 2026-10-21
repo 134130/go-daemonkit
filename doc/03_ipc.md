@@ -47,7 +47,7 @@
 
 ### Events
 
-- 공개 API는 `App.Publish(topic, payload)`, `Client.Subscribe(ctx, topic)`, `Subscription.Next(ctx, dst)`, `Subscription.Close()`다.
+- Raw APIs are `App.Publish(topic, payload)`, `Client.Subscribe(ctx, topic)`, `Subscription.Next(ctx, dst)`, and `Subscription.Close()`. Typed Topic contracts reuse these semantics; see [Developer Experience](04_developer_experience.md).
 - Topic은 최대 64자의 이름이며 정확히 일치하는 구독에만 전달한다. 별도 typed Topic이나 범용 내부 Bus는 제공하지 않는다.
 - 클라이언트가 subscription ID를 생성하고 로컬 큐를 등록한 다음 `$/subscribe` 요청을 보낸다. Params는 `{subscription, topic}`, 성공 결과는 `{}`다.
 - 서버 등록 이후 이벤트를 큐에 넣으며, 등록 응답을 보낸 뒤 이벤트 전송을 시작한다. 등록 전 이벤트는 재전송하지 않는다.

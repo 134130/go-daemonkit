@@ -14,3 +14,12 @@
 - The raw `Client.Call(ctx, name, request, responsePointer)` remains available.
 - Applications own JSON field compatibility and business validation. The framework does not derive routing from Go types or negotiate DTO schemas.
 - Contract declarations require no generator.
+
+## Typed event contracts
+
+- `NewTopic[Payload]("stable.name")` binds a wire name to a payload type without registering a topic.
+- `App.PublishTopic(topic, payload)` and `Client.SubscribeTopic(ctx, topic)` infer the payload type from the shared contract.
+- `TypedSubscription[Payload].Next(ctx)` returns a payload and error; failures return the payload's zero value. Close is idempotent.
+- Payloads may be any JSON-serializable value. Topic names follow the existing event naming rules; the zero Topic is invalid.
+- Typed events reuse the existing subscription queues, limits, cancellation, overflow, and connection lifetime. They introduce no discovery or schema negotiation.
+- Raw Publish, Subscribe, and Subscription remain available. Applications own payload schema compatibility.
