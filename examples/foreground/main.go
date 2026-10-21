@@ -17,7 +17,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if len(os.Args) == 2 && (os.Args[1] == "now" || os.Args[1] == "watch") {
+	if len(os.Args) == 2 && (os.Args[1] == "now" || os.Args[1] == "now-raw" || os.Args[1] == "watch") {
 		client, err := daemon.Connect(ctx, options)
 		if err != nil {
 			log.Fatal(err)
@@ -41,7 +41,12 @@ func main() {
 				log.Print(tick.Time)
 			}
 		}
-		response, err := client.Invoke(ctx, clockapi.Now, clockapi.NowRequest{})
+		var response clockapi.NowResponse
+		if os.Args[1] == "now-raw" {
+			err = client.Call(ctx, "clock.now", clockapi.NowRequest{}, &response)
+		} else {
+			response, err = client.Invoke(ctx, clockapi.Now, clockapi.NowRequest{})
+		}
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -70,7 +75,7 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 && (len(os.Args) != 2 || os.Args[1] != "daemon") {
-		log.Fatal("usage: foreground [start|stop|restart|now|watch|daemon] or foreground update <verified-executable>")
+		log.Fatal("usage: foreground [start|stop|restart|now|now-raw|watch|daemon] or foreground update <verified-executable>")
 	}
 	app, err := daemon.New(options)
 	if err != nil {
