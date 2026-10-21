@@ -13,7 +13,7 @@ func renameFile(oldpath, newpath string) error {
 	for {
 		err := os.Rename(oldpath, newpath)
 		// Scanners and readers can briefly hold handles without FILE_SHARE_DELETE.
-		if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) || !time.Now().Before(deadline) {
+		if (!errors.Is(err, windows.ERROR_SHARING_VIOLATION) && !errors.Is(err, windows.ERROR_ACCESS_DENIED)) || !time.Now().Before(deadline) {
 			return err
 		}
 		time.Sleep(10 * time.Millisecond)

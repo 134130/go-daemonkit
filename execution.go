@@ -12,6 +12,7 @@ import (
 )
 
 type executionRecord struct {
+	Release         string `json:"release,omitempty"`
 	PID             int    `json:"pid"`
 	ProcessIdentity string `json:"processIdentity"`
 	LaunchNonce     string `json:"launchNonce"`
@@ -98,6 +99,9 @@ func writeJSONRecord(directory, name string, record any) error {
 	data, err := json.Marshal(record)
 	if err != nil {
 		return err
+	}
+	if len(data) > 16<<10 {
+		return fmt.Errorf("state record exceeds 16 KiB")
 	}
 	file, err := os.CreateTemp(directory, ".runtime-*.tmp")
 	if err != nil {

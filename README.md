@@ -13,7 +13,7 @@ The CLI and daemon use the same binary in different execution modes. GUI applica
 flowchart TB
     subgraph caller["Caller process · CLI / GUI"]
         UI["Application code"]
-        Manager["Manager<br/>EnsureRunning · Stop · Restart"]
+        Manager["Manager<br/>EnsureRunning · Stop · Restart · Update"]
         Client["Client<br/>Connect · Call · Subscribe · Close"]
         UI --> Manager
         UI --> Client
@@ -47,7 +47,7 @@ flowchart TB
 
 | Component | Responsibility | Code |
 | --- | --- | --- |
-| Manager | Serialize start, stop, and restart; prepare releases; confirm readiness and process exit | [manager.go](manager.go), [stop.go](stop.go), [release.go](release.go) |
+| Manager | Serialize lifecycle operations; select releases; verify updates and recover interrupted transitions | [manager.go](manager.go), [stop.go](stop.go), [update.go](update.go), [release.go](release.go) |
 | App | Validate services, hold the runtime lock, order initialization and cleanup | [app.go](app.go), [service.go](service.go) |
 | Client / RPC server | Match request IDs, encode results and errors, manage concurrency, cancellation, and limits | [client.go](client.go), [rpc_server.go](rpc_server.go) |
 | Events | Exact-topic subscriptions, ordered delivery, bounded queues and cleanup | [events.go](events.go), [events_server.go](events_server.go) |
@@ -78,7 +78,7 @@ sequenceDiagram
         CLI->>App: Handshake to verify target and protocol
         App-->>CLI: Reuse existing execution generation
     else Safe to spawn a new process
-        CLI->>OS: Copy release and record launchNonce
+        CLI->>OS: Resolve selected release (prepare on first start), record launchNonce
         CLI->>OS: Spawn detached process
         OS->>App: Run the same binary in daemon mode
         App->>OS: Acquire runtime lock and verify stale resource ownership
@@ -124,6 +124,29 @@ Restart holds one operation lock from shutdown through the next successful readi
 Instance state lives at `<state root>/<appID>/<instanceID>`. Executables are stored at
 `releases/<content hash>/<appID>d`, with an `.exe` suffix on Windows.
 Running executables are never overwritten. Records, logs, and the working directory live outside releases.
+
+### Updating a managed daemon
+
+`manager.Update(ctx, executablePath)` copies a prepared local executable into managed
+storage and selects it with the Manager's configured daemon arguments. The caller
+owns downloading and verifying authenticity, integrity, and the requested version.
+Keep the source unchanged until Update returns; it can then be removed. An existing
+CLI or GUI can update the daemon without first running the new executable as a CLI.
+The calling CLI itself is not replaced.
+An identical content hash is a no-op. With no running daemon, it selects the release
+without starting it. Otherwise, it stops the old process, starts the candidate,
+verifies Ready, and commits the selection. `EnsureRunning` and `Restart` use the
+selected release and its saved arguments, even when called by a different CLI build.
+
+On candidate failure, the previous release is restarted. `errors.Is(err,
+daemon.ErrUpdateRolledBack)` means that rollback reached Ready; it still reports a
+failed update. Application data is not rolled back. Failed rollback or unverifiable
+process ownership leaves the journal in place and returns an error.
+
+Cancellation after shutdown begins ends the caller's wait. The next lifecycle
+call resumes the persisted transaction; `Stop` instead records a stop request and
+converges to a stopped instance without launching a replacement. There is no
+background updater. See [the update state machine](doc/02_process_update.md).
 
 ## 3. RPC calls, concurrency, and cancellation
 

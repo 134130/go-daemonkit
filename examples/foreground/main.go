@@ -47,7 +47,8 @@ func main() {
 		log.Print(response.Time)
 		return
 	}
-	if len(os.Args) == 2 && (os.Args[1] == "start" || os.Args[1] == "stop" || os.Args[1] == "restart") {
+	if (len(os.Args) == 2 && (os.Args[1] == "start" || os.Args[1] == "stop" || os.Args[1] == "restart")) ||
+		(len(os.Args) == 3 && os.Args[1] == "update") {
 		manager, err := daemon.NewManager(options, "daemon")
 		if err != nil {
 			log.Fatal(err)
@@ -59,6 +60,8 @@ func main() {
 			err = manager.Stop(ctx)
 		case "restart":
 			err = manager.Restart(ctx)
+		case "update":
+			err = manager.Update(ctx, os.Args[2])
 		}
 		if err != nil {
 			log.Fatal(err)
@@ -66,7 +69,7 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 && (len(os.Args) != 2 || os.Args[1] != "daemon") {
-		log.Fatal("usage: foreground [start|stop|restart|now|watch|daemon]")
+		log.Fatal("usage: foreground [start|stop|restart|now|watch|daemon] or foreground update <verified-executable>")
 	}
 	app, err := daemon.New(options)
 	if err != nil {

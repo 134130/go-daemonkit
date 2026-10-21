@@ -20,6 +20,9 @@ func (m *Manager) Stop(ctx context.Context) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
+	if found, err := m.resumeUpdate(ctx, true); found || err != nil {
+		return err
+	}
 	return m.stop(ctx)
 }
 
@@ -30,6 +33,9 @@ func (m *Manager) Restart(ctx context.Context) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
+	if _, err := m.resumeUpdate(ctx, false); err != nil {
+		return err
+	}
 	if err := m.stop(ctx); err != nil {
 		return err
 	}

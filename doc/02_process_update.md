@@ -1,30 +1,53 @@
 # 02. Process Update
 
-구현 우선순위 2. Runtime 완성 후, 업무 RPC 이전에 실행 중인 데몬의 버전 전환을 다룬다.
-결정 사항 외 세부 항목은 논의용 초안이다.
+## Application API
 
-## 결정 사항
+- `Manager.Update(ctx, executablePath) error` accepts a prepared local executable and uses the Manager's configured daemon arguments.
+- The caller selects the requested version, downloads the platform binary, and verifies its authenticity, integrity, and version before calling Update.
+- Keep the source unchanged until Update returns. Update copies it into managed storage; the caller may then remove the source, including after cancellation.
+- Existing CLI and GUI processes can supply a new binary. Update does not replace the calling application.
+- Content hashes identify managed releases; they do not authenticate publishers.
+- An identical content hash is a no-op.
+- A stopped instance stays stopped; Update prepares and selects the candidate without verifying Service Startup.
+- A running managed instance is stopped before the candidate starts. The candidate must reach Ready before selection commits.
+- `EnsureRunning` and `Restart` use the selected release and its saved arguments. The first start initializes this selection from the caller.
+- A foreground or unverifiable process is not adopted for update.
+- `ErrUpdateRolledBack` means the update failed and the previous release reached Ready. Rollback failure returns an error and retains the transaction.
 
-- 새 바이너리는 별도 release 디렉터리에 준비한다.
-- 기존 데몬 종료 후 새 release를 실행하고 Ready를 확인한다.
-- 이전 release를 보존하고 새 버전 시작 실패 시 재실행한다.
-- 사용이 끝난 release의 파일 정리는 버전 전환과 분리한다.
+## State machine
 
-## 챙길 내용
+Candidate preparation precedes the transaction and leaves the incumbent running.
+The operation lock serializes Update, EnsureRunning, Stop, and Restart.
 
-- 업데이트 주체·트리거: 명시적 요청과 자동 정책 구분. Connect의 암묵적 교체 여부 결정.
-- 후보 바이너리: 출처·실행 가능 여부·Protocol 호환성 검증, 이전 바이너리 보존.
-- 전환 순서: 사전 검증 → 기존 프로세스 종료 → 새 프로세스 시작 → Ready 확인.
-- 동시성: Update·EnsureRunning·Stop 간 직렬화, 전환 중 인스턴스 소유권 유지.
-- 실패 처리: 검증 실패 시 기존 프로세스 유지. 새 프로세스 시작 실패 시 이전 버전 재시작.
-- 중단 복구: 업데이트 도중 제어 프로세스가 죽어도 다음 실행에서 상태 판별·복구.
-- 롤백 경계: 프로세스·바이너리 복구와 앱 데이터 마이그레이션 책임 분리.
-- 플랫폼 차이: 실행 중 파일 교체 제약, 경로·권한·임시 파일 정리.
+```mermaid
+stateDiagram-v2
+    [*] --> Stopping: Candidate prepared and transaction recorded
+    Stopping --> Starting: Previous process exit confirmed
+    Starting --> Verifying: Launch reservation established
+    Verifying --> Committing: Target generation is Ready
+    Committing --> [*]: Selection committed and journal removed
+    Starting --> Stopping: Candidate failed; target becomes previous release
+    Verifying --> Stopping: Candidate failed; target becomes previous release
+```
 
-## 첫 완료 기준
+- `update.json` stores the phase, previous and candidate selections, rollback direction, process identities, launch nonce, verification deadline, and optional stop request.
+- Each phase records intent before its side effect. Recovery observes the process and reservation before repeating work.
+- Rollback uses the same phases with the previous release as target. Failed rollback does not start an automatic retry loop.
+- A launch reservation with an unknown PID is not evidence of failure. No replacement or rollback process is spawned until ownership can be established.
+- The verification deadline survives controller restarts.
+- After Ready, a failed selection write retains Committing. Recovery finishes the commit without replacing the verified candidate.
+- Missing, invalid, or conflicting transaction dependencies block lifecycle changes. They are not interpreted as an absent transaction.
+- Cancellation before shutdown leaves the incumbent untouched. After shutdown intent is recorded, cancellation ends waiting and retains the transaction for a later lifecycle call.
+- Stop persists its intent before acting. It stops the transaction's known generation without starting a candidate or rollback process. Before Committing, the previous selection remains selected; at Committing, the verified target is selected.
+- Safe process termination follows the platform's existing ownership rules. If termination cannot be proven safe, the transaction remains pending.
 
-- 정상 업데이트 후 새 버전 Ready 확인, 활성 데몬 최대 1개.
-- 후보 검증 실패 시 기존 데몬 유지. 시작 실패 시 이전 버전 재시작 확인.
-- 동시 시작·업데이트 및 전환 중 Crash에도 다음 실행으로 복구.
+## Release and recovery boundaries
 
-요청 Drain은 업무 RPC 도입 시 연결한다. 무중단 전환·Supervisor·데이터 롤백은 별도 설계.
+- Executables live in separate content-addressed release directories and are never overwritten while running.
+- `current.json` stores the selected content hash and daemon arguments; preparation alone does not change it.
+- Startup validates selected executable content. Previous releases remain available for rollback.
+- Cleanup of unused releases is separate from update.
+- Recovery runs on the next lifecycle call; there is no supervisor or background updater.
+- The journal supports controller-process interruption. It is not a guarantee of recovery from storage loss or power failure.
+- Application data, external effects, and schema migrations are not rolled back. Applications must keep data compatible with the previous release if they rely on process rollback.
+- Remote downloads, TUF, automatic update policy, and compatibility with clients predating update support are outside this contract.

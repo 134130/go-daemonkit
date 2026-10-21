@@ -15,7 +15,7 @@ import (
 const startTimeout = 30 * time.Second
 const launchNonceEnv = "GO_DAEMONKIT_LAUNCH_NONCE"
 
-// Manager starts the current executable in its application's daemon mode.
+// Manager runs the selected release in its application's daemon mode.
 // It never replaces an already running, protocol-compatible daemon.
 type Manager struct {
 	app        *App
@@ -54,6 +54,9 @@ func (m *Manager) EnsureRunning(ctx context.Context) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
+	if _, err := m.resumeUpdate(ctx, false); err != nil {
+		return err
+	}
 	return m.ensureRunning(ctx)
 }
 
@@ -120,49 +123,75 @@ func (m *Manager) ensureRunning(ctx context.Context) error {
 	if err := releaseRuntime(); err != nil {
 		return err
 	}
-	path, err := prepareRelease(m.app.directory, m.executable, m.app.options.AppID)
-	if err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	pending = launchRecord{LaunchNonce: rand.Text()}
-	if err := writeJSONRecord(m.app.directory, "launch.json", pending); err != nil {
-		return err
-	}
-	command := exec.Command(path, m.args...)
-	command.Dir = m.app.directory
-	command.Env = append(os.Environ(), launchNonceEnv+"="+pending.LaunchNonce)
-	configureDetached(command)
-	log, err := os.OpenFile(filepath.Join(m.app.directory, "daemon.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return errors.Join(err, removeLaunch(m.app.directory, pending.LaunchNonce))
-	}
-	command.Stdout, command.Stderr = log, log
-	err = command.Start()
-	_ = log.Close()
-	if err != nil {
-		return errors.Join(err, removeLaunch(m.app.directory, pending.LaunchNonce))
-	}
-	// Reap our child even when the caller stops waiting. No context is attached
-	// to Command: a client deadline must never terminate a running daemon.
-	go func() { _ = command.Wait() }()
-	pending.PID = command.Process.Pid
-	pending.ProcessIdentity, err = processIdentity(pending.PID)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return errors.Join(fmt.Errorf("daemon exited during startup: %w", err), removeLaunch(m.app.directory, pending.LaunchNonce))
+
+	selection, err := m.readSelection()
+	if errors.Is(err, os.ErrNotExist) {
+		selection, err = m.prepareSelection(m.executable)
+		if err == nil {
+			err = writeJSONRecord(m.app.directory, "current.json", selection)
 		}
-		return fmt.Errorf("read spawned process identity (launch reservation retained): %w", err)
 	}
-	if err := writeJSONRecord(m.app.directory, "launch.json", pending); err != nil {
+	if err != nil {
+		return err
+	}
+	pending, err = m.spawnRelease(ctx, selection, rand.Text())
+	if err != nil {
 		return err
 	}
 	return m.waitReady(ctx, pending.LaunchNonce, &pending)
 }
 
+// spawnRelease records intent before spawn. Unknown outcomes retain the reservation.
+func (m *Manager) spawnRelease(ctx context.Context, selection releaseSelection, nonce string) (launchRecord, error) {
+	pending := launchRecord{LaunchNonce: nonce, Release: selection.Release}
+	path, err := m.releasePath(selection)
+	if err != nil {
+		return pending, err
+	}
+	if err = ctx.Err(); err != nil {
+		return pending, err
+	}
+	if err = writeJSONRecord(m.app.directory, "launch.json", pending); err != nil {
+		return pending, err
+	}
+	command := exec.Command(path, selection.Args...)
+	command.Dir = m.app.directory
+	command.Env = append(os.Environ(), launchNonceEnv+"="+nonce)
+	configureDetached(command)
+	log, err := os.OpenFile(filepath.Join(m.app.directory, "daemon.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return pending, errors.Join(err, removeLaunch(m.app.directory, nonce))
+	}
+	command.Stdout, command.Stderr = log, log
+	err = command.Start()
+	_ = log.Close()
+	if err != nil {
+		return pending, errors.Join(err, removeLaunch(m.app.directory, nonce))
+	}
+	go func() { _ = command.Wait() }()
+	pending.PID = command.Process.Pid
+	pending.ProcessIdentity, err = processIdentity(pending.PID)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return pending, errors.Join(fmt.Errorf("daemon exited during startup: %w", err), removeLaunch(m.app.directory, nonce))
+		}
+		return pending, fmt.Errorf("read spawned process identity (launch reservation retained): %w", err)
+	}
+	if err = writeJSONRecord(m.app.directory, "launch.json", pending); err != nil {
+		return pending, err
+	}
+	return pending, nil
+}
+
 func (m *Manager) probe(ctx context.Context, expected string) (bool, error) {
+	ready, err := m.probeReady(ctx, expected)
+	if ready && err == nil && expected != "" {
+		err = removeLaunch(m.app.directory, expected)
+	}
+	return ready, err
+}
+
+func (m *Manager) probeReady(ctx context.Context, expected string) (bool, error) {
 	params := initializeParams{m.app.options.AppID, m.app.options.InstanceID, protocolVersion, m.app.options.Version}
 	conn, identity, err := connectLocal(ctx, m.app.endpoint, params)
 	if err != nil {
@@ -178,11 +207,6 @@ func (m *Manager) probe(ctx context.Context, expected string) (bool, error) {
 	_ = conn.CloseNow()
 	if expected != "" && expected != identity.LaunchNonce {
 		return false, fmt.Errorf("connected daemon differs from expected launch generation")
-	}
-	if expected != "" {
-		if err := removeLaunch(m.app.directory, expected); err != nil {
-			return false, err
-		}
 	}
 	return true, nil
 }
@@ -220,6 +244,7 @@ func processMatches(pid int, expected string) (bool, error) {
 }
 
 type launchRecord struct {
+	Release         string `json:"release,omitempty"`
 	LaunchNonce     string `json:"launchNonce"`
 	PID             int    `json:"pid,omitempty"`
 	ProcessIdentity string `json:"processIdentity,omitempty"`

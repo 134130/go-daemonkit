@@ -127,6 +127,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 		return err
 	}
 	nonce := rand.Text()
+	release := ""
 	if requested := os.Getenv(launchNonceEnv); requested != "" {
 		reservation, err := readLaunch(a.directory)
 		if err != nil {
@@ -136,13 +137,14 @@ func (a *App) Run(ctx context.Context) (err error) {
 			return fmt.Errorf("launch reservation does not match requested generation")
 		}
 		nonce = requested
+		release = reservation.Release
 	}
 	listener, socket, publish, err := prepareExecutionEndpoint(a.endpoint, nonce)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
-	record := executionRecord{PID: os.Getpid(), ProcessIdentity: process, LaunchNonce: nonce, SocketIdentity: socket}
+	record := executionRecord{Release: release, PID: os.Getpid(), ProcessIdentity: process, LaunchNonce: nonce, SocketIdentity: socket}
 	if err := writeExecution(a.directory, record); err != nil {
 		return err
 	}
