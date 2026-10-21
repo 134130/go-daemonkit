@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -17,7 +20,24 @@ func prepareExecutionEndpoint(path, _ string) (net.Listener, string, func() erro
 }
 
 func prepareInstanceDirectory(path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return err
+	}
+	private, err := windows.SecurityDescriptorFromString("O:" + user.User.Sid.String() + "D:P(A;OICI;FA;;;" + user.User.Sid.String() + ")")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	// Elevated tokens may default to Administrators as owner; set the user at creation.
+	attributes := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: private}
+	if err := windows.CreateDirectory(name, attributes); err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
 		return err
 	}
 	info, err := os.Lstat(path)
@@ -26,10 +46,6 @@ func prepareInstanceDirectory(path string) error {
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("invalid instance directory")
-	}
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
-		return err
 	}
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
@@ -41,10 +57,6 @@ func prepareInstanceDirectory(path string) error {
 	}
 	if owner == nil || !owner.Equals(user.User.Sid) {
 		return fmt.Errorf("instance directory has a different owner: %w", os.ErrPermission)
-	}
-	private, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + user.User.Sid.String() + ")")
-	if err != nil {
-		return err
 	}
 	dacl, _, err := private.DACL()
 	if err != nil {

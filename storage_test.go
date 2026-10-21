@@ -291,7 +291,11 @@ func TestStorageLifecycle(t *testing.T) {
 
 func TestStorageInitializationFailurePreservesData(t *testing.T) {
 	a := testApp(t)
-	if err := os.MkdirAll(a.directory, 0o700); err != nil {
+	prepare, err := lockInstance(a.directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepare(); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(a.directory, "storage.sqlite")

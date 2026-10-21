@@ -60,7 +60,7 @@ func prepareRelease(directory, source, appID string) (string, error) {
 	destination := filepath.Join(releases, release)
 	executable := filepath.Join(destination, name)
 	if _, err := os.Lstat(destination); os.IsNotExist(err) {
-		if err := os.Rename(staging, destination); err != nil {
+		if err := renameFile(staging, destination); err != nil {
 			return "", err
 		}
 	} else if err != nil {

@@ -114,7 +114,7 @@ func writeJSONRecord(directory, name string, record any) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), filepath.Join(directory, name))
+	return renameFile(file.Name(), filepath.Join(directory, name))
 }
 
 // recoverExecution requires the runtime lock. Unverifiable ownership fails
