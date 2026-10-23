@@ -195,7 +195,7 @@ func (m *Manager) probeReady(ctx context.Context, expected string) (bool, error)
 	params := initializeParams{m.app.options.AppID, m.app.options.InstanceID, protocolVersion, m.app.options.Version}
 	conn, identity, err := connectLocal(ctx, m.app.endpoint, params)
 	if err != nil {
-		var protocolError *rpcError
+		var protocolError *RPCError
 		if errors.As(err, &protocolError) || errors.Is(err, errHandshake) {
 			return false, err
 		}

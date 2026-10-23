@@ -4,8 +4,10 @@ package daemon
 
 import (
 	"errors"
+	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -128,5 +130,45 @@ func TestLocalSocketRejectsUnsafeAncestor(t *testing.T) {
 			_ = listener.Close()
 		}
 		t.Fatalf("replaceable ancestor accepted: %v", err)
+	}
+}
+
+// Validate canonical byte length, including aliases such as /tmp -> /private/tmp.
+func TestInstanceEndpointLength(t *testing.T) {
+	root := filepath.Dir(testLocalPath(t))
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit := len(unix.RawSockaddrUnix{}.Path) - 1
+	for _, extra := range []int{0, 1} {
+		name := strings.Repeat("a", limit-len(resolved)-len("/ipc.sock")-1+extra)
+		directory := filepath.Join(root, name)
+		path, err := instanceEndpoint(directory)
+		if extra == 0 && (err != nil || path != filepath.Join(directory, "ipc.sock")) {
+			t.Fatalf("boundary path = %q, %v", path, err)
+		}
+		if extra == 1 && (err == nil || !strings.Contains(err.Error(), "shorten")) {
+			t.Fatalf("long path error = %v", err)
+		}
+		if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("validation created directory: %v", err)
+		}
+	}
+	t.Setenv("XDG_STATE_HOME", root)
+	if _, err := New(Options{AppID: strings.Repeat("a", 64), InstanceID: strings.Repeat("b", 64), Version: "test"}); err == nil {
+		t.Fatal("New accepted an unusable socket path")
+	}
+	// A short alias to a long existing ancestor must not bypass the check.
+	long := filepath.Join(root, strings.Repeat("x", limit))
+	if err := os.Mkdir(long, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(long, alias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instanceEndpoint(filepath.Join(alias, "missing", "child")); err == nil {
+		t.Fatal("accepted long canonical path behind a short alias")
 	}
 }

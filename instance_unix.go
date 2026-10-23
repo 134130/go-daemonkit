@@ -13,7 +13,22 @@ import (
 )
 
 func instanceEndpoint(directory string) (string, error) {
-	return filepath.Join(directory, "ipc.sock"), nil
+	// Resolve existing ancestors without creating the instance directory.
+	parent, suffix := directory, ""
+	for {
+		resolved, err := filepath.EvalSymlinks(parent)
+		if err == nil {
+			if err := validateSocketPathLength(filepath.Join(resolved, suffix, "ipc.sock")); err != nil {
+				return "", err
+			}
+			return filepath.Join(directory, "ipc.sock"), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) || parent == filepath.Dir(parent) {
+			return "", err
+		}
+		suffix = filepath.Join(filepath.Base(parent), suffix)
+		parent = filepath.Dir(parent)
+	}
 }
 
 func lockInstance(directory string) (func() error, error) {
@@ -52,4 +67,12 @@ func lockNamedInstance(directory, name string) (func() error, error) {
 	}
 	// Keep the lock file: unlinking it would let contenders lock different inodes.
 	return file.Close, nil
+}
+
+func validateSocketPathLength(path string) error {
+	limit := len(unix.RawSockaddrUnix{}.Path) - 1
+	if len(path) > limit {
+		return fmt.Errorf("unix socket path is %d bytes; maximum is %d: shorten XDG_STATE_HOME, appID, or instanceID", len(path), limit)
+	}
+	return nil
 }

@@ -157,3 +157,81 @@ func TestManagerConcurrentLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Real child processes are needed to exercise Manager's process-exit deadline.
+func TestStopAllowsRPCAndServiceCleanup(t *testing.T) {
+	m, marker := testManager(t)
+	m.args = []string{"-test.run=^TestGracefulStopHelper$"}
+	if err := m.EnsureRunning(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	client, err := Connect(t.Context(), m.app.options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	done := make(chan error, 1)
+	go func() {
+		var response serviceResponse
+		done <- client.Call(t.Context(), "slow", serviceRequest{}, &response)
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(marker + ".entered"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("RPC did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := m.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker + ".cleaned"); err != nil {
+		t.Fatalf("Shutdown hook did not complete: %v", err)
+	}
+}
+
+type gracefulStopService struct{}
+
+func (*gracefulStopService) Shutdown(ctx context.Context) error {
+	select {
+	case <-time.After(3 * time.Second):
+		return os.WriteFile(os.Getenv("DAEMONKIT_TEST_LAUNCHES")+".cleaned", nil, 0600)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestGracefulStopHelper(t *testing.T) {
+	if os.Getenv("DAEMONKIT_MANAGER_HELPER") != "1" {
+		return
+	}
+	app, err := New(Options{AppID: "test", Version: "child"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Register(&gracefulStopService{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Handle(NewMethod[serviceRequest, serviceResponse]("slow"), func(ctx context.Context, _ serviceRequest) (serviceResponse, error) {
+		if err := os.WriteFile(os.Getenv("DAEMONKIT_TEST_LAUNCHES")+".entered", nil, 0600); err != nil {
+			return serviceResponse{}, err
+		}
+		select {
+		case <-time.After(3 * time.Second):
+			return serviceResponse{}, nil
+		case <-ctx.Done():
+			return serviceResponse{}, ctx.Err()
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -164,7 +164,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 	defer a.events.close()
 	started, startupErr := a.startServices(ctx)
 	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopGrace)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), serviceStopGrace)
 		defer cancel()
 		err = errors.Join(err, shutdownServices(cleanupCtx, started))
 	}()
@@ -236,7 +236,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 	// Admission is closed before Wait, so no new calls can be added.
 	drained := make(chan struct{})
 	go func() { rpc.calls.Wait(); close(drained) }()
-	timer := time.NewTimer(stopGrace - time.Second)
+	timer := time.NewTimer(rpcDrainGrace)
 	select {
 	case <-drained:
 	case <-timer.C:
@@ -244,7 +244,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 	timer.Stop()
 	cancel()
 	// Give cooperative cancellation time to unwind before Service cleanup.
-	timer = time.NewTimer(time.Second)
+	timer = time.NewTimer(rpcCancelGrace)
 	select {
 	case <-drained:
 	case <-timer.C:

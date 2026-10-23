@@ -178,7 +178,7 @@ process ownership leaves the journal in place and returns an error.
 Cancellation after shutdown begins ends the caller's wait. The next lifecycle
 call resumes the persisted transaction; `Stop` instead records a stop request and
 converges to a stopped instance without launching a replacement. There is no
-background updater. See [the update state machine](doc/02_process_update.md).
+background updater. See [the update implementation](update.go).
 
 ## 3. RPC calls, concurrency, and cancellation
 
@@ -261,8 +261,7 @@ Native calls may prompt or block and cannot be interrupted by context cancellati
 This protects stored credentials according to OS policy. It does not guarantee
 biometric authentication or protection from process memory inspection. Scope
 names and keys are metadata; namespace isolation is not an authorization boundary
-against other processes running as the same user. See [the API](secrets/secrets.go)
-and [storage contract](doc/05_storage.md).
+against other processes running as the same user. See [the secrets API](secrets/secrets.go).
 
 ### Events
 

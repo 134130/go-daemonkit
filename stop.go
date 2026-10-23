@@ -10,7 +10,13 @@ import (
 	"time"
 )
 
-const stopGrace = 5 * time.Second
+const (
+	rpcDrainGrace    = 4 * time.Second
+	rpcCancelGrace   = time.Second
+	serviceStopGrace = 5 * time.Second
+	// Allow every daemon cleanup phase to finish before forcing process exit.
+	stopGrace = rpcDrainGrace + rpcCancelGrace + serviceStopGrace + time.Second
+)
 
 // Stop requests shutdown and waits for the recorded process generation to exit.
 // Cancellation ends waiting; it does not undo an accepted shutdown.

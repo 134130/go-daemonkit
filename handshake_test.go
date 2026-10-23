@@ -30,13 +30,8 @@ func TestHandshake(t *testing.T) {
 	if !h.ready() {
 		t.Fatal("initialized did not enable server push")
 	}
-	for range 2 {
-		if err := h.admitRequest(); err != nil {
-			t.Fatal(err)
-		}
-	}
 	h.close()
-	if h.ready() || h.admitRequest() == nil {
+	if h.ready() {
 		t.Fatal("closed connection admitted work")
 	}
 }
@@ -73,7 +68,7 @@ func TestHandshakeRejectsInvalidIdentity(t *testing.T) {
 }
 
 func TestHandshakeRejectsOutOfOrderMessages(t *testing.T) {
-	for _, sequence := range []string{"ready", "request", "init init", "init request", "init ready ready", "init ready init", "close init"} {
+	for _, sequence := range []string{"ready", "init init", "init ready ready", "init ready init", "close init"} {
 		t.Run(sequence, func(t *testing.T) {
 			params, server := validHandshake()
 			var h handshake
@@ -84,8 +79,6 @@ func TestHandshakeRejectsOutOfOrderMessages(t *testing.T) {
 					_, err = h.initialize(params, server)
 				case "ready":
 					err = h.initialized()
-				case "request":
-					err = h.admitRequest()
 				case "close":
 					h.close()
 				}

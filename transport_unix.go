@@ -85,7 +85,11 @@ func privateSocketPath(path string) (string, error) {
 			break
 		}
 	}
-	return filepath.Join(parent, filepath.Base(path)), nil
+	path = filepath.Join(parent, filepath.Base(path))
+	if err := validateSocketPathLength(path); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 type localListener struct {

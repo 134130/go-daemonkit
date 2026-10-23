@@ -54,3 +54,31 @@ func TestPrepareReleasePreservesPublishedBinary(t *testing.T) {
 		t.Fatal("modified managed executable accepted")
 	}
 }
+
+func TestReleaseValidationRejectsSymlinkDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks requires Windows privileges")
+	}
+	m, _ := testManager(t)
+	if err := m.Update(t.Context(), m.executable); err != nil {
+		t.Fatal(err)
+	}
+	selection, err := m.readSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(m.app.directory, "releases", selection.Release)
+	saved := directory + "-saved"
+	if err := os.Rename(directory, saved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(saved, directory); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Update(t.Context(), m.executable); err == nil {
+		t.Fatal("Update accepted symlink release directory")
+	}
+	if err := m.EnsureRunning(t.Context()); err == nil {
+		t.Fatal("EnsureRunning accepted symlink release directory")
+	}
+}

@@ -24,10 +24,7 @@ func prepareRelease(directory, source, appID string) (string, error) {
 		return "", err
 	}
 	defer os.RemoveAll(staging)
-	name := appID + "d"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
+	name := releaseName(appID)
 	input, err := os.Open(source)
 	if err != nil {
 		return "", err
@@ -67,26 +64,8 @@ func prepareRelease(directory, source, appID string) (string, error) {
 		}
 	} else if err != nil {
 		return "", err
-	} else {
-		info, err := os.Lstat(executable)
-		if err != nil {
-			return "", err
-		}
-		if !info.Mode().IsRegular() {
-			return "", fmt.Errorf("managed executable is not a regular file")
-		}
-		file, err := os.Open(executable)
-		if err != nil {
-			return "", err
-		}
-		defer file.Close()
-		existingHash := sha256.New()
-		if _, err := io.Copy(existingHash, file); err != nil {
-			return "", err
-		}
-		if hex.EncodeToString(existingHash.Sum(nil)) != release {
-			return "", fmt.Errorf("managed release content changed")
-		}
+	} else if err := validateRelease(executable, release); err != nil {
+		return "", err
 	}
 	return executable, nil
 }
@@ -141,37 +120,48 @@ func (m *Manager) releasePath(selection releaseSelection) (string, error) {
 	if !selection.valid() {
 		return "", fmt.Errorf("invalid release selection")
 	}
-	dir := filepath.Join(m.app.directory, "releases", selection.Release)
-	info, err := os.Lstat(dir)
-	if err != nil {
+	path := filepath.Join(m.app.directory, "releases", selection.Release, releaseName(m.app.options.AppID))
+	if err := validateRelease(path, selection.Release); err != nil {
 		return "", err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("invalid release directory")
-	}
-	name := m.app.options.AppID + "d"
+	return path, nil
+}
+
+func releaseName(appID string) string {
+	name := appID + "d"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	path := filepath.Join(dir, name)
+	return name
+}
+
+// Preparation and startup must accept exactly the same published release.
+func validateRelease(path, expectedHash string) error {
+	info, err := os.Lstat(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("invalid release directory")
+	}
 	info, err = os.Lstat(path)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("invalid release executable")
+		return fmt.Errorf("invalid release executable")
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer func() { _ = file.Close() }()
 	hash := sha256.New()
 	if _, err = io.Copy(hash, file); err != nil {
-		return "", err
+		return err
 	}
-	if hex.EncodeToString(hash.Sum(nil)) != selection.Release {
-		return "", fmt.Errorf("managed release content changed")
+	if hex.EncodeToString(hash.Sum(nil)) != expectedHash {
+		return fmt.Errorf("managed release content changed")
 	}
-	return path, nil
+	return nil
 }

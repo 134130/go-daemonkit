@@ -38,13 +38,6 @@ func (h *handshake) initialized() error {
 	return nil
 }
 
-func (h *handshake) admitRequest() error {
-	if !h.ready() {
-		return h.reject("connection is not initialized")
-	}
-	return nil
-}
-
 // Server-originated requests and notifications must wait for this condition.
 func (h *handshake) ready() bool {
 	return h.state == handshakeReady
