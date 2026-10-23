@@ -3,6 +3,9 @@
 A framework for running Go services as user-local daemons.
 The framework manages processes, ownership, lifecycle, and local RPC. Services own business logic and their resources.
 
+Try the [interactive update demo](examples/update-demo/README.md) to switch between
+three local daemon builds and call version-specific RPCs.
+
 These three diagrams describe the current implementation.
 
 ## 1. Components and responsibilities
@@ -53,7 +56,7 @@ flowchart TB
 | Events | Exact-topic subscriptions, ordered delivery, bounded queues and cleanup | [events.go](events.go), [events_server.go](events_server.go) |
 | Transport / execution ownership | Enforce OS-user access, establish local connections, verify process identity and execution generation | [transport.go](transport.go), [execution.go](execution.go) |
 | Storage | App-owned SQLite lifetime, namespace isolation, snapshots and atomic writes | [storage](storage/) · [lifetime](storage.go) |
-| Application Service | Enforce business rules, protect shared state, observe cancellation, create and release its resources | [ClockService example](examples/foreground/clock.go) |
+| Application Service | Enforce business rules, protect shared state, observe cancellation, create and release its resources | [ClockService example](examples/update-demo/clock.go) |
 
 Register a Service as a pointer to a named struct for lifecycle management only.
 `Startup(context.Context) error` and `Shutdown(context.Context) error` are independently optional.
@@ -89,8 +92,8 @@ Duplicate names, nil handlers, and registration after Run begins are rejected.
 Handlers may run concurrently and must observe cancellation. Applications own DTO
 semantics and JSON field compatibility; the framework does not negotiate schemas.
 
-See the separate [clock contract](examples/foreground/clockapi/clock.go) and
-[service implementation](examples/foreground/clock.go). No generator is required.
+See the separate [clock contract](examples/update-demo/api/api.go) and
+[service implementation](examples/update-demo/clock.go). No generator is required.
 
 ## 2. Process lifecycle and OS boundaries
 
@@ -312,5 +315,6 @@ its RPC calls and other subscriptions too. An unsubscribe write failure also
 closes the connection so the server can reclaim registrations.
 
 There is no replay, automatic resubscription, wildcard matching, or progress API.
-After reconnecting, callers explicitly subscribe again. Try `foreground watch`
-with the foreground example running to receive a clock event every five seconds.
+After reconnecting, callers explicitly subscribe again. In the
+[update demo](examples/update-demo/README.md), press `w` to subscribe and receive
+the next clock event, published every five seconds.

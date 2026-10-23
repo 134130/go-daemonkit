@@ -1,0 +1,18 @@
+[tools]
+go = "1.27.2"
+
+[tasks.build]
+description = "Build all three demo releases"
+run = """
+go build -ldflags "-X main.version=0.0.1" -o updatables/update-demo-v0.0.1{% if os() == 'windows' %}.exe{% endif %} .
+go build -ldflags "-X main.version=0.0.2" -o updatables/update-demo-v0.0.2{% if os() == 'windows' %}.exe{% endif %} .
+go build -ldflags "-X main.version=0.0.3" -o updatables/update-demo-v0.0.3{% if os() == 'windows' %}.exe{% endif %} .
+"""
+
+[tasks.run]
+description = "Open the demo using the v1 CLI"
+depends = ["build"]
+run = "./updatables/update-demo-v0.0.1{% if os() == 'windows' %}.exe{% endif %}"
+
+[tasks.test]
+run = "go test ./..."

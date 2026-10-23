@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/134130/go-daemonkit/examples/foreground/clockapi"
+	"github.com/134130/go-daemonkit/examples/update-demo/api"
 )
 
 // ClockService owns its background worker from Startup through Shutdown.
 type ClockService struct {
-	publish func(clockapi.NowResponse) error
+	publish func(api.NowResponse) error
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 }
@@ -30,7 +30,7 @@ func (s *ClockService) Startup(ctx context.Context) error {
 			case now := <-ticker.C:
 				log.Printf("clock: %s", now.Format(time.RFC3339))
 				if s.publish != nil {
-					if err := s.publish(clockapi.NowResponse{Time: now}); err != nil {
+					if err := s.publish(api.NowResponse{Time: now}); err != nil {
 						log.Printf("clock publish: %v", err)
 					}
 				}
@@ -54,19 +54,4 @@ func (s *ClockService) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-func (*ClockService) Now(ctx context.Context, _ clockapi.NowRequest) (clockapi.NowResponse, error) {
-	log.Print("clock: Now called")
-	for range 10 {
-		select {
-		case <-ctx.Done():
-			log.Print("clock: Now canceled")
-			return clockapi.NowResponse{}, ctx.Err()
-		default:
-			time.Sleep(100 * time.Millisecond) // Simulate work
-		}
-	}
-	log.Print("clock: Now returning time")
-	return clockapi.NowResponse{Time: time.Now()}, nil
 }
