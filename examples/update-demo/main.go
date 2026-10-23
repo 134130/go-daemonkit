@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,7 +37,7 @@ func run() error {
 		return nil
 	}
 	if flag.NArg() > 1 {
-		return fmt.Errorf("usage: update-demo [--builds DIR] [--instance NAME] [daemon|stop]")
+		return fmt.Errorf("usage: update-demo [--builds DIR] [--instance NAME] [daemon|stop|status]")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -44,12 +45,18 @@ func run() error {
 	if flag.Arg(0) == "daemon" {
 		return runDaemon(ctx, options)
 	}
-	if flag.Arg(0) != "" && flag.Arg(0) != "stop" {
+	if flag.Arg(0) != "" && flag.Arg(0) != "stop" && flag.Arg(0) != "status" {
 		return fmt.Errorf("unknown command %q", flag.Arg(0))
 	}
 	manager, err := daemon.NewManager(options, "--instance", *instance, "daemon")
 	if err != nil {
 		return err
+	}
+	if flag.Arg(0) == "status" {
+		status, statusErr := manager.Status(ctx)
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return errors.Join(statusErr, encoder.Encode(status))
 	}
 	if flag.Arg(0) == "stop" {
 		return manager.Stop(ctx)

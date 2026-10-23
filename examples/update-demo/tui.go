@@ -7,6 +7,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	daemon "github.com/134130/go-daemonkit"
 )
 
 type model struct {
@@ -107,8 +108,14 @@ func (m *model) View() tea.View {
 	if m.busy {
 		status = m.spinner.View() + " " + status
 	}
-	daemonState := "Offline"
-	if m.overview.connected {
+	daemonState := string(m.overview.info.State)
+	if daemonState == "" {
+		daemonState = "unknown"
+	}
+	if m.overview.info.State == daemon.StatusRunning {
+		daemonState = fmt.Sprintf("Running · not ready · PID %d", m.overview.info.PID)
+	}
+	if m.overview.info.State == daemon.StatusReady {
 		daemonState = fmt.Sprintf("● Ready   Version %s   PID %d", m.overview.info.Version, m.overview.info.PID)
 	}
 	if m.busy {

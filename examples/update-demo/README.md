@@ -60,9 +60,10 @@ The clock worker logs and publishes the current time every five seconds;
 Shutdown cancels and joins that worker. Its logs are in the instance's
 `daemon.log`, under the platform state directory.
 
-To stop outside the TUI:
+To inspect runtime information and paths, or stop outside the TUI:
 
 ```sh
+./updatables/update-demo-v0.0.1 status
 ./updatables/update-demo-v0.0.1 stop
 ```
 
@@ -75,7 +76,8 @@ when stopping it. Use `--builds DIR` to read builds from another directory.
 The list recognizes these three exact native filenames at startup. It never
 executes candidates to inspect them. Use only binaries you built and trust:
 filenames are labels, not proof of authenticity or embedded version. After
-switching, the UI obtains the actual daemon version and PID through RPC.
+switching, the UI obtains the actual daemon version, PID, and readiness through
+`Manager.Status(ctx)`. No application-specific status RPC is needed.
 
 The framework copies the candidate into managed release storage, stops the old
 daemon, verifies the replacement, and rolls back if replacement startup fails.

@@ -26,7 +26,7 @@ const (
 
 type resultMsg struct {
 	action    action
-	info      api.InfoResponse
+	info      daemon.Status
 	connected bool
 	detail    string
 	err       error
@@ -130,16 +130,15 @@ func (s *session) execute(parent context.Context, action action, candidate strin
 			result.detail = fmt.Sprintf("v%s · %s", response.Version, response.Time.Format(time.RFC3339))
 		}
 	}
-	if s.client != nil {
-		infoCtx, end := context.WithTimeout(ctx, 5*time.Second)
-		info, err := s.client.Invoke(infoCtx, api.Info, api.Empty{})
-		end()
-		if err != nil {
-			s.disconnect()
-			result.err = errors.Join(result.err, err)
-		} else {
-			result.info, result.connected = info, true
-		}
+
+	infoCtx, end := context.WithTimeout(ctx, 5*time.Second)
+	status, err := s.manager.Status(infoCtx)
+	end()
+	result.info = status
+	result.connected = status.State == daemon.StatusReady && s.client != nil
+	if !result.connected {
+		s.disconnect()
 	}
+	result.err = errors.Join(result.err, err)
 	return result
 }

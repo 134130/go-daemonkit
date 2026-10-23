@@ -7,7 +7,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/134130/go-daemonkit/examples/update-demo/api"
+	daemon "github.com/134130/go-daemonkit"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -65,7 +65,7 @@ func panel(title, body string, size Size) string {
 type overviewPanel struct {
 	builds    []build
 	selected  int
-	info      api.InfoResponse
+	info      daemon.Status
 	connected bool
 }
 

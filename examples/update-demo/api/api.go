@@ -6,17 +6,12 @@ import (
 	"time"
 )
 
-var Info = daemon.NewMethod[Empty, InfoResponse]("demo.info")
 var Now = daemon.NewMethod[Empty, NowResponse]("demo.now")
 
 // Both clients know this DTO. Only v0.0.2+ daemons expose the handler.
 var Greet = daemon.NewMethod[GreetRequest, GreetResponse]("demo.greet")
 
 type Empty struct{}
-type InfoResponse struct {
-	Version string `json:"version"`
-	PID     int    `json:"pid"`
-}
 type NowResponse struct {
 	Version string    `json:"version"`
 	Time    time.Time `json:"time"`

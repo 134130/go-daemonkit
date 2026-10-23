@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"runtime"
 	"time"
 
@@ -17,9 +16,6 @@ type demoService struct {
 	ClockService
 }
 
-func (s *demoService) Info(context.Context, api.Empty) (api.InfoResponse, error) {
-	return api.InfoResponse{Version: s.version, PID: os.Getpid()}, nil
-}
 func (s *demoService) Now(context.Context, api.Empty) (api.NowResponse, error) {
 	return api.NowResponse{Version: s.version, Time: time.Now()}, nil
 }
@@ -36,9 +32,6 @@ func runDaemon(ctx context.Context, options daemon.Options) error {
 		return app.PublishTopic(api.Tick, tick)
 	}}}
 	if err := app.Register(service); err != nil {
-		return err
-	}
-	if err := app.Handle(api.Info, service.Info); err != nil {
 		return err
 	}
 	if err := app.Handle(api.Now, service.Now); err != nil {

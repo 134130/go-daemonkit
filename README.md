@@ -16,7 +16,7 @@ The CLI and daemon use the same binary in different execution modes. GUI applica
 flowchart TB
     subgraph caller["Caller process · CLI / GUI"]
         UI["Application code"]
-        Manager["Manager<br/>EnsureRunning · Stop · Restart · Update"]
+        Manager["Manager<br/>EnsureRunning · Stop · Restart · Update · Status"]
         Client["Client<br/>Connect · Invoke / Call · Subscribe · Close"]
         UI --> Manager
         UI --> Client
@@ -159,6 +159,39 @@ Restart holds one operation lock from shutdown through the next successful readi
 Instance state lives at `<state root>/<appID>/<instanceID>`. Executables are stored at
 `releases/<content hash>/<appID>d`, with an `.exe` suffix on Windows.
 Running executables are never overwritten. Records, logs, and the working directory live outside releases.
+
+### Inspecting a daemon
+
+`Manager.Status(ctx)` returns a snapshot without starting, stopping, recovering,
+or modifying instance files:
+
+```go
+status, err := manager.Status(ctx)
+fmt.Println(status.State, status.Version, status.PID)
+fmt.Println(status.StateDir, status.LogPath, status.Endpoint)
+if err != nil {
+    // The snapshot still contains paths and any verified process information.
+    return err
+}
+```
+
+The snapshot includes application and instance IDs, managed release hash, and the
+negotiated protocol version. Version and protocol are populated after a successful
+handshake. LogPath points to the Manager's stdout/stderr file; it may not exist,
+and foreground execution does not automatically write to it.
+
+| State | Observation |
+| --- | --- |
+| `ready` | A compatible handshake matched a live execution record |
+| `running` | A recorded process generation is alive, but readiness could not be confirmed |
+| `stopped` | No live recorded process and the local endpoint was absent or refused connection |
+| `unknown` | Inspection could not establish the state |
+
+Connection, permission, protocol, malformed record, and cancellation errors
+return partial information alongside the error. A failed connection alone does
+not mean stopped. This is an observation, not a lifecycle lock: a concurrent
+launch may not have published its process record yet, and the state can change
+immediately after the query.
 
 ### Updating a managed daemon
 
