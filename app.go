@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -42,6 +44,7 @@ type App struct {
 	running   bool
 	storage   storageimpl.Database
 	events    eventHub
+	logs      logWriter
 }
 
 // New validates configuration and resolves paths without creating resources.
@@ -102,6 +105,8 @@ func stateRoot() (string, error) {
 // Run blocks until shutdown, startup failure, or ctx cancellation. It retains
 // the instance lock until all connections and the listener have been closed.
 // A shutdown RPC returns nil; caller cancellation returns ctx.Err().
+// On ErrLogShutdownTimeout, runtime ownership remains held until logging cleanup
+// finishes or this process exits. Daemon entry points should exit after Run returns.
 func (a *App) Run(ctx context.Context) (err error) {
 	a.serviceMu.Lock()
 	if a.running {
@@ -110,7 +115,12 @@ func (a *App) Run(ctx context.Context) (err error) {
 	}
 	a.sealed, a.running = true, true
 	a.serviceMu.Unlock()
-	defer func() { a.serviceMu.Lock(); a.running = false; a.serviceMu.Unlock() }()
+	owned := false
+	defer func() {
+		if !owned {
+			a.markStopped()
+		}
+	}()
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -119,7 +129,11 @@ func (a *App) Run(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, unlock()) }()
+	owned = true
+	var listener net.Listener
+	var record *executionRecord
+	var logs *logSession
+	defer func() { err = errors.Join(err, a.finishRun(unlock, listener, record, logs)) }()
 	if err := recoverExecution(a.directory, a.endpoint); err != nil {
 		return err
 	}
@@ -140,22 +154,20 @@ func (a *App) Run(ctx context.Context) (err error) {
 		nonce = requested
 		release = reservation.Release
 	}
-	listener, socket, publish, err := prepareExecutionEndpoint(a.endpoint, nonce)
+	prepared, socket, publish, err := prepareExecutionEndpoint(a.endpoint, nonce)
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
-	record := executionRecord{Release: release, PID: os.Getpid(), ProcessIdentity: process, LaunchNonce: nonce, SocketIdentity: socket}
-	if err := writeExecution(a.directory, record); err != nil {
+	listener = prepared
+	execution := executionRecord{Release: release, PID: os.Getpid(), ProcessIdentity: process, LaunchNonce: nonce, SocketIdentity: socket}
+	if err := writeExecution(a.directory, execution); err != nil {
 		return err
 	}
-	defer func() {
-		if closeErr := listener.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-			return
-		}
-		err = errors.Join(err, removeExecution(a.directory, record))
-	}()
+	record = &execution
+	logs, err = a.openLogs()
+	if err != nil {
+		return err
+	}
 	if err := a.openStorage(ctx); err != nil {
 		return err
 	}
@@ -187,6 +199,7 @@ func (a *App) Run(ctx context.Context) (err error) {
 		ReadHeaderTimeout: handshakeTimeout,
 		WriteTimeout:      handshakeTimeout,
 		MaxHeaderBytes:    16 << 10,
+		ErrorLog:          log.New(diagnosticLogWriter{&a.logs}, "http: ", log.LstdFlags),
 	}
 	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -262,4 +275,64 @@ func replyRPCError(ctx context.Context, conn *websocket.Conn, id json.RawMessage
 	replyCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	return writeRPC(replyCtx, conn, rpcMessage{JSONRPC: "2.0", ID: id, Error: failure})
+}
+
+// markStopped runs only after the execution's last file worker releases ownership.
+func (a *App) markStopped() {
+	a.serviceMu.Lock()
+	a.running = false
+	a.serviceMu.Unlock()
+}
+
+func (a *App) finishRun(unlock func() error, listener net.Listener, record *executionRecord, logs *logSession) error {
+	finish := func() error {
+		defer a.markStopped()
+		var err error
+		var listenerErr error
+		if listener != nil {
+			listenerErr = listener.Close()
+			err = listenerErr
+		}
+		if logs != nil {
+			// Stop can recognize cleanup without a live IPC endpoint. If disk state
+			// cannot be written, retain ownership until the worker and cleanup finish.
+			if record != nil {
+				current, readErr := readExecution(a.directory)
+				if readErr != nil {
+					err = errors.Join(err, readErr)
+				} else if current != *record {
+					err = errors.Join(err, fmt.Errorf("execution ownership changed during log cleanup"))
+				} else {
+					closing := *record
+					closing.Closing = true
+					if writeErr := writeExecution(a.directory, closing); writeErr != nil {
+						err = errors.Join(err, writeErr)
+					} else {
+						*record = closing
+					}
+				}
+			}
+			<-logs.done
+			err = errors.Join(err, logs.closeErr)
+		}
+		if record != nil && listenerErr == nil {
+			err = errors.Join(err, removeExecution(a.directory, *record))
+		}
+		return errors.Join(err, unlock())
+	}
+	if logs == nil {
+		return finish()
+	}
+	a.logs.stop(logs)
+	done := make(chan error, 1)
+	go func() { done <- finish() }()
+	timer := time.NewTimer(logStopGrace)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		logs.abandon.Store(true)
+		return ErrLogShutdownTimeout
+	}
 }

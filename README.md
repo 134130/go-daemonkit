@@ -38,7 +38,7 @@ flowchart TB
         Service --> Resources
     end
 
-    State["Instance directory<br/>Releases · execution records · storage.sqlite · daemon.log"]
+    State["Instance directory<br/>Releases · execution records · storage.sqlite · logs/"]
     Manager -->|"Spawn detached process when needed"| App
     Manager <-->|"Handshake / shutdown"| IPC
     Client <-->|"Requests / responses / events"| IPC
@@ -136,6 +136,7 @@ sequenceDiagram
     App->>S: Shutdown in reverse order
     S-->>App: Release owned resources
     App->>OS: Close SQLite storage
+    App->>App: Drain log worker and close files
     App->>OS: Remove execution record and release runtime lock
     Note over App,OS: The executable exits after App.Run returns
     CLI->>OS: Confirm the same process generation has exited
@@ -169,6 +170,7 @@ or modifying instance files:
 status, err := manager.Status(ctx)
 fmt.Println(status.State, status.Version, status.PID)
 fmt.Println(status.StateDir, status.LogPath, status.Endpoint)
+fmt.Println(status.StdoutPath, status.StderrPath)
 if err != nil {
     // The snapshot still contains paths and any verified process information.
     return err
@@ -177,8 +179,9 @@ if err != nil {
 
 The snapshot includes application and instance IDs, managed release hash, and the
 negotiated protocol version. Version and protocol are populated after a successful
-handshake. LogPath points to the Manager's stdout/stderr file; it may not exist,
-and foreground execution does not automatically write to it.
+handshake. LogPath points to managed application logs; StdoutPath and StderrPath
+identify separate raw-output files. They may not exist before the first run.
+Foreground execution leaves the process's standard streams unchanged.
 
 | State | Observation |
 | --- | --- |
@@ -261,6 +264,65 @@ sequenceDiagram
 - Messages are limited to 64 KiB. Each Client allows up to 64 pending calls; the server allows up to 64 active requests across all connections.
 - Errors carry `code`, `message`, and optional `data`. Programs should branch on codes and structured data, not message strings.
 - Cancellation adopts LSP's `$/cancelRequest` and `-32800` as extensions. Overload `-32001` and shutdown rejection `-32600` with `data.reason` follow Codex conventions. These are framework contracts, not a claim of full LSP compliance.
+
+### Logging
+
+The framework owns log files, asynchronous writing, rotation, and cleanup.
+Applications choose their logger and output format. Obtain the writer before Run
+and inject a logger into services; the writer is active from Startup through
+the last Shutdown hook.
+
+```go
+// Using github.com/rs/zerolog in your application:
+logger := zerolog.New(app.LogWriter()).With().Timestamp().Logger()
+logger.Info().Str("workspace", path).Msg("opened")
+```
+
+The standard library also works: `log.New(app.LogWriter(), "", log.LstdFlags)`.
+
+Each Write copies one opaque byte record, at most 64 KiB. At most 256 records
+can be outstanding, including concurrent copies and the in-flight disk write.
+Calls never wait for disk I/O, rotation, or queue space. Memory synchronization,
+allocation, and logger formatting still take time. Oversized writes and writes
+to a full queue are discarded whole and return `len(p), nil`; writes before
+Run or after Shutdown return `os.ErrClosed`. Acceptance does not imply storage.
+
+One worker serializes writes and rotates before exceeding 10 MiB, retaining
+three previous files. I/O failures discard that record without replay; the next
+record can try again. Failed rotation prevents appending past the limit. Loss
+and failure counts are kept in memory, without recursive logging. No per-record
+fsync, durable audit logging, or automatic flushing of caller-owned buffers is
+provided.
+
+Files live under `<state>/<app>/<instance>/logs/`:
+
+| File | Contents and retention |
+| --- | --- |
+| `daemon.log` | LogWriter output; 10 MiB plus `.1`, `.2`, `.3` |
+| `daemon.stdout` | Managed child stdout; periodically trimmed |
+| `daemon.stderr` | Managed child stderr, panic output, and framework diagnostics; periodically trimmed |
+
+Framework text is kept out of daemon.log so application JSONL remains JSONL.
+Every 30 seconds, even without managed writes, the worker checks raw files.
+Above 10 MiB, it preserves the last 1 MiB in `.previous`, then truncates the
+original file in place. Failed preservation leaves the original intact.
+Inherited handles use append mode. Raw output can block on disk, can be lost
+during concurrent truncation, and can exceed the threshold between checks.
+Raw capture applies to Manager-launched processes; foreground stdout/stderr
+are not redirected. Files are private to the OS user.
+
+After Service Shutdown, admission closes and Run waits up to two seconds for
+draining and file cleanup. On timeout, pending writes are abandoned and
+`errors.Is(err, daemon.ErrLogShutdownTimeout)` is true. A stuck OS write or Close
+cannot be canceled: the runtime lock, execution record, and App running state
+remain owned until cleanup finishes or the process exits. Another Run cannot
+reuse that instance during this time. Manager.Stop recognizes the closing
+execution and includes the logging budget in its shutdown wait.
+
+Daemon entry points should exit after Run returns. Flush any application-owned
+buffers in Shutdown. Abrupt process exit and cleanup timeout can lose accepted
+logs. The two-second limit bounds logging cleanup, not arbitrary service hooks,
+initial file opening, or other startup work.
 
 ### Storage
 

@@ -158,13 +158,23 @@ func (m *Manager) spawnRelease(ctx context.Context, selection releaseSelection, 
 	command.Dir = m.app.directory
 	command.Env = append(os.Environ(), launchNonceEnv+"="+nonce)
 	configureDetached(command)
-	log, err := os.OpenFile(filepath.Join(m.app.directory, "daemon.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	dir, err := prepareLogDirectory(m.app.directory)
 	if err != nil {
 		return pending, errors.Join(err, removeLaunch(m.app.directory, nonce))
 	}
-	command.Stdout, command.Stderr = log, log
+	stdout, err := openLogFile(filepath.Join(dir, "daemon.stdout"), os.O_CREATE|os.O_APPEND|os.O_WRONLY)
+	if err != nil {
+		return pending, errors.Join(err, removeLaunch(m.app.directory, nonce))
+	}
+	stderr, err := openLogFile(filepath.Join(dir, "daemon.stderr"), os.O_CREATE|os.O_APPEND|os.O_WRONLY)
+	if err != nil {
+		_ = stdout.Close()
+		return pending, errors.Join(err, removeLaunch(m.app.directory, nonce))
+	}
+	command.Stdout, command.Stderr = stdout, stderr
 	err = command.Start()
-	_ = log.Close()
+	_ = stdout.Close()
+	_ = stderr.Close()
 	if err != nil {
 		return pending, errors.Join(err, removeLaunch(m.app.directory, nonce))
 	}
@@ -222,7 +232,7 @@ func (m *Manager) waitReady(ctx context.Context, nonce string, child *launchReco
 				return err
 			}
 			if !alive {
-				return errors.Join(fmt.Errorf("daemon exited before Ready; see daemon.log"), removeLaunch(m.app.directory, nonce))
+				return errors.Join(fmt.Errorf("daemon exited before Ready; see logs/daemon.stderr"), removeLaunch(m.app.directory, nonce))
 			}
 		}
 		timer := time.NewTimer(20 * time.Millisecond)

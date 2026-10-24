@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +49,7 @@ func TestLayouts(t *testing.T) {
 func TestClockLifecycle(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ticks := make(chan api.NowResponse, 2)
-		s := ClockService{publish: func(tick api.NowResponse) error { ticks <- tick; return nil }}
+		s := ClockService{logger: log.New(io.Discard, "", 0), publish: func(tick api.NowResponse) error { ticks <- tick; return nil }}
 		if err := s.Startup(context.Background()); err != nil {
 			t.Fatal(err)
 		}

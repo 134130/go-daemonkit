@@ -15,7 +15,7 @@ func TestStatusStoppedDoesNotCreateFiles(t *testing.T) {
 	if err != nil || status.State != StatusStopped || status.PID != 0 {
 		t.Fatalf("Status = %+v, %v", status, err)
 	}
-	if status.AppID != "test" || status.InstanceID != "default" || status.StateDir != app.directory || status.Endpoint != app.endpoint || status.LogPath != filepath.Join(app.directory, "daemon.log") {
+	if status.AppID != "test" || status.InstanceID != "default" || status.StateDir != app.directory || status.Endpoint != app.endpoint || status.LogPath != filepath.Join(app.directory, "logs", "daemon.log") || status.StdoutPath != filepath.Join(app.directory, "logs", "daemon.stdout") || status.StderrPath != filepath.Join(app.directory, "logs", "daemon.stderr") {
 		t.Fatalf("paths: %+v", status)
 	}
 	if _, err := os.Stat(app.directory); !errors.Is(err, os.ErrNotExist) {

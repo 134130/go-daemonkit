@@ -35,9 +35,12 @@ type Status struct {
 	Version         string
 	ProtocolVersion int
 	StateDir        string
-	// LogPath is the Manager's stdout/stderr destination; the file may not exist.
-	LogPath  string
-	Endpoint string
+	// LogPath contains LogWriter output. Raw process output has separate paths.
+	// Files may not exist before the first run.
+	LogPath    string
+	StdoutPath string
+	StderrPath string
+	Endpoint   string
 }
 
 // Status observes this instance without starting, stopping, recovering, or
@@ -48,7 +51,8 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	app := m.app
 	result := Status{
 		AppID: app.options.AppID, InstanceID: app.options.InstanceID, State: StatusUnknown,
-		StateDir: app.directory, LogPath: filepath.Join(app.directory, "daemon.log"), Endpoint: app.endpoint,
+		StateDir: app.directory, LogPath: filepath.Join(app.directory, "logs", "daemon.log"),
+		StdoutPath: filepath.Join(app.directory, "logs", "daemon.stdout"), StderrPath: filepath.Join(app.directory, "logs", "daemon.stderr"), Endpoint: app.endpoint,
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err

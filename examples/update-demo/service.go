@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"log"
 	"runtime"
 	"time"
 
@@ -27,7 +27,7 @@ func runDaemon(ctx context.Context, options daemon.Options) error {
 	if err != nil {
 		return err
 	}
-	service := &demoService{version: options.Version, ClockService: ClockService{publish: func(tick api.NowResponse) error {
+	service := &demoService{version: options.Version, ClockService: ClockService{logger: log.New(app.LogWriter(), "", log.LstdFlags), publish: func(tick api.NowResponse) error {
 		tick.Version = options.Version
 		return app.PublishTopic(api.Tick, tick)
 	}}}
@@ -47,11 +47,7 @@ func runDaemon(ctx context.Context, options daemon.Options) error {
 			return err
 		}
 	}
-	err = app.Run(ctx)
-	if errors.Is(err, context.Canceled) {
-		return nil
-	}
-	return err
+	return app.Run(ctx)
 }
 
 func (*demoService) Runtime(context.Context, api.Empty) (api.RuntimeResponse, error) {

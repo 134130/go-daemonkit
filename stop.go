@@ -15,7 +15,7 @@ const (
 	rpcCancelGrace   = time.Second
 	serviceStopGrace = 5 * time.Second
 	// Allow every daemon cleanup phase to finish before forcing process exit.
-	stopGrace = rpcDrainGrace + rpcCancelGrace + serviceStopGrace + time.Second
+	stopGrace = rpcDrainGrace + rpcCancelGrace + serviceStopGrace + logStopGrace + time.Second
 )
 
 // Stop requests shutdown and waits for the recorded process generation to exit.
@@ -85,12 +85,27 @@ func (m *Manager) stop(ctx context.Context) error {
 	if err != nil || !alive {
 		return err
 	}
+	if record.Closing {
+		if err := writeJSONRecord(m.app.directory, "stopping.json", record); err != nil {
+			return err
+		}
+		return m.finishStop(ctx, record)
+	}
 	params := initializeParams{m.app.options.AppID, m.app.options.InstanceID, protocolVersion, m.app.options.Version}
 	conn, identity, err := connectLocal(ctx, m.app.endpoint, params)
 	if err != nil {
 		alive, checkErr := processMatches(record.PID, record.ProcessIdentity)
 		if checkErr == nil && !alive {
 			return nil
+		}
+		if checkErr == nil {
+			current, readErr := readExecution(m.app.directory)
+			if readErr == nil && current.Closing && current.PID == record.PID && current.ProcessIdentity == record.ProcessIdentity && current.LaunchNonce == record.LaunchNonce {
+				if writeErr := writeJSONRecord(m.app.directory, "stopping.json", current); writeErr != nil {
+					return errors.Join(err, writeErr)
+				}
+				return m.finishStop(ctx, current)
+			}
 		}
 		return errors.Join(err, checkErr)
 	}

@@ -95,6 +95,17 @@ func TestManagerDaemonHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if os.Getenv("DAEMONKIT_TEST_LOGS") == "1" {
+		if _, err := fmt.Fprintln(os.Stdout, "raw stdout"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fmt.Fprintln(os.Stderr, "raw stderr"); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.Register(&logLifecycleService{writer: app.LogWriter()}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := app.Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}

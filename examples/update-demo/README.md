@@ -57,8 +57,12 @@ supported by their build version. There is no dynamic API discovery.
 
 Only one operation runs at a time. The activity panel retains the last 200 entries.
 The clock worker logs and publishes the current time every five seconds;
-Shutdown cancels and joins that worker. Its logs are in the instance's
-`daemon.log`, under the platform state directory.
+Shutdown cancels and joins that worker. A standard logger is explicitly injected
+using `log.New(app.LogWriter(), ...)`. Its logs are in the instance's
+`logs/daemon.log`, under the platform state directory. The framework drains
+accepted messages after Shutdown and rotates the file. Direct stdout/stderr
+are captured separately in `logs/daemon.stdout` and `logs/daemon.stderr`.
+The status command prints all three paths.
 
 To inspect runtime information and paths, or stop outside the TUI:
 

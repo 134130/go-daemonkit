@@ -12,6 +12,7 @@ import (
 )
 
 type executionRecord struct {
+	Closing         bool   `json:"closing,omitempty"`
 	Release         string `json:"release,omitempty"`
 	PID             int    `json:"pid"`
 	ProcessIdentity string `json:"processIdentity"`
