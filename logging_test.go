@@ -276,6 +276,14 @@ func TestManagerCapturesSeparateLogs(t *testing.T) {
 
 func TestLogOpenFailureReleasesExecution(t *testing.T) {
 	app := testApp(t)
+	// Match Run's directory ownership setup, including elevated Windows tokens.
+	prepare, err := lockInstance(app.directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepare(); err != nil {
+		t.Fatal(err)
+	}
 	dir, err := prepareLogDirectory(app.directory)
 	if err != nil {
 		t.Fatal(err)
