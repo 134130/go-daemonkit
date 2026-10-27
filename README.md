@@ -428,3 +428,26 @@ and reconsider policy; use the existing lifecycle operations for pending recover
 Do not blindly retry with a new token. Version ordering remains application-owned.
 After acceptance, cancellation and rollback have the same semantics as `Update`.
 A same-binary update remains a no-op and does not change daemon arguments.
+
+### Child environments
+
+`NewManager` inherits the caller's environment at each spawn. To avoid changing
+process-wide environment variables, use an explicit child environment:
+
+```go
+manager, err := daemon.NewManagerWithLaunch(options, daemon.LaunchOptions{
+    Env: childEnv, // Complete environment selected by the application.
+}, "daemon", "run", "--config", activePath)
+```
+
+The constructor copies Env. Nil inherits; an empty non-nil slice disables
+inheritance. Go may add required platform variables (SYSTEMROOT on Windows).
+Duplicate keys follow `exec.Cmd.Env` rules; the framework overrides its launch
+nonce. Build an allowlisted environment when inherited credentials are unwanted.
+
+The environment applies to every child this Manager starts, including rollback.
+It is never stored in selections or journals. Recovery by another Manager uses
+that Manager's environment: launcher crashes do not preserve transient secrets or
+environment-only configuration. Store non-secret invocation identity in argv;
+applications must distinguish optional default configuration from required files.
+Old environment-only selections cannot reconstruct an environment never recorded.

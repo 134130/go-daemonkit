@@ -21,11 +21,30 @@ type Manager struct {
 	app        *App
 	executable string
 	args       []string
+	env        []string
 }
 
 // NewManager takes the arguments that make this executable call App.Run.
 // Constructing a Manager does not copy files or start a process.
 func NewManager(options Options, daemonArgs ...string) (*Manager, error) {
+	return NewManagerWithLaunch(options, LaunchOptions{}, daemonArgs...)
+}
+
+// LaunchOptions controls children started by a Manager, including rollback.
+// It is not persisted in selections or update journals.
+type LaunchOptions struct {
+	// Env follows exec.Cmd.Env: nil inherits the environment at spawn time;
+	// non-nil supplies the entire environment (an empty slice disables inheritance).
+	// Go may supply required platform variables such as SYSTEMROOT on Windows.
+	// Duplicate keys use the last value. The framework always sets its launch nonce.
+	Env []string
+}
+
+// NewManagerWithLaunch constructs a Manager with a copied child environment.
+// A different Manager recovering an interrupted update uses its own environment,
+// not the original launcher's. Persist non-secret invocation identity in daemonArgs;
+// applications own secret resolution and restart/configuration policy.
+func NewManagerWithLaunch(options Options, launch LaunchOptions, daemonArgs ...string) (*Manager, error) {
 	if len(daemonArgs) == 0 {
 		return nil, fmt.Errorf("daemon mode arguments are required")
 	}
@@ -41,7 +60,7 @@ func NewManager(options Options, daemonArgs ...string) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Manager{app: app, executable: executable, args: slices.Clone(daemonArgs)}, nil
+	return &Manager{app: app, executable: executable, args: slices.Clone(daemonArgs), env: slices.Clone(launch.Env)}, nil
 }
 
 // EnsureRunning serializes starts and waits for a compatible Ready handshake.
@@ -156,7 +175,11 @@ func (m *Manager) spawnRelease(ctx context.Context, selection releaseSelection, 
 	}
 	command := exec.Command(path, selection.Args...)
 	command.Dir = m.app.directory
-	command.Env = append(os.Environ(), launchNonceEnv+"="+nonce)
+	command.Env = slices.Clone(m.env)
+	if command.Env == nil {
+		command.Env = os.Environ()
+	}
+	command.Env = append(command.Env, launchNonceEnv+"="+nonce)
 	configureDetached(command)
 	dir, err := prepareLogDirectory(m.app.directory)
 	if err != nil {
