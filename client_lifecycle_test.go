@@ -20,7 +20,7 @@ func TestClientDoneAndErr(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer client.Close()
+			defer func() { _ = client.Close() }()
 			if err := client.Err(); err != nil {
 				t.Fatalf("initial error: %v", err)
 			}
