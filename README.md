@@ -413,3 +413,18 @@ There is no replay, automatic resubscription, wildcard matching, or progress API
 After reconnecting, callers explicitly subscribe again. In the
 [update demo](examples/update-demo/README.md), press `w` to subscribe and receive
 the next clock event, published every five seconds.
+
+### Conditional updates
+
+Use `Status.UpdateToken` with `Manager.UpdateIf(ctx, executablePath, token)` when
+an application's version policy depends on an observed daemon. Tokens are valid
+only for Ready managed executions; they bind the instance, execution generation,
+and selected invocation. They are opaque Go values, not serializable credentials.
+A restart invalidates the token even if the binary version stays the same.
+
+`ErrUpdateConflict` means the condition changed or a launch, stop, or update
+journal is pending. No new update or recovery is started on conflict. Re-observe
+and reconsider policy; use the existing lifecycle operations for pending recovery.
+Do not blindly retry with a new token. Version ordering remains application-owned.
+After acceptance, cancellation and rollback have the same semantics as `Update`.
+A same-binary update remains a no-op and does not change daemon arguments.

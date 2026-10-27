@@ -24,9 +24,11 @@ const (
 // Status is a best-effort snapshot. Concurrent lifecycle operations can change
 // it immediately. Paths are available even when inspection returns an error.
 type Status struct {
-	AppID      string
-	InstanceID string
-	State      StatusState
+	// UpdateToken is valid only for a Ready managed execution with matching selection.
+	UpdateToken UpdateToken
+	AppID       string
+	InstanceID  string
+	State       StatusState
 	// PID and Release are populated only for a verified live process generation.
 	PID int
 	// Release is the managed executable's content hash; empty for foreground runs.
@@ -120,5 +122,14 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	}
 	result.State, result.PID, result.Release = StatusReady, current.PID, current.Release
 	result.Version, result.ProtocolVersion = identity.ServerVersion, identity.ProtocolVersion
+	if current.Release != "" {
+		selection, err := m.readSelection()
+		if err != nil {
+			return result, err
+		}
+		if selection.Release == current.Release && !current.Closing {
+			result.UpdateToken = UpdateToken{directory: app.directory, execution: current, selection: selection}
+		}
+	}
 	return result, nil
 }

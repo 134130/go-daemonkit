@@ -13,6 +13,57 @@ import (
 // ErrUpdateRolledBack means the update failed and the previous release is Ready.
 var ErrUpdateRolledBack = errors.New("update failed; previous release restored")
 
+// ErrUpdateConflict means the observed execution changed or recovery is pending.
+// Re-observe and reconsider application policy; do not blindly retry the update.
+var ErrUpdateConflict = errors.New("update precondition changed")
+
+// UpdateToken identifies a Ready managed execution and its selected invocation.
+// Obtain it from Status. The zero value is invalid; tokens are process-local values,
+// not a serialized credential or a configuration revision.
+type UpdateToken struct {
+	directory string
+	execution executionRecord
+	selection releaseSelection
+}
+
+// UpdateIf updates only the Ready managed execution observed by Status.
+// Pending update/stop/launch journals cause a conflict without recovery. Use an
+// unconditional lifecycle operation to recover, then observe again. Once accepted,
+// cancellation and rollback follow Update's contract. Version policy is caller-owned.
+func (m *Manager) UpdateIf(ctx context.Context, executablePath string, expected UpdateToken) (err error) {
+	unlock, err := lockOperation(ctx, m.app.directory)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, unlock()) }()
+	if err := m.checkUpdateToken(ctx, expected); err != nil {
+		return err
+	}
+	return m.update(ctx, executablePath, &expected)
+}
+
+func (m *Manager) checkUpdateToken(ctx context.Context, expected UpdateToken) error {
+	if expected.directory != m.app.directory || expected.execution.LaunchNonce == "" {
+		return ErrUpdateConflict
+	}
+	for _, name := range []string{"update.json", "stopping.json", "launch.json"} {
+		if _, err := os.Lstat(filepath.Join(m.app.directory, name)); err == nil {
+			return ErrUpdateConflict
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	state, err := m.Status(ctx)
+	if err != nil {
+		return err
+	}
+	actual := state.UpdateToken
+	if state.State != StatusReady || actual.execution != expected.execution || !actual.selection.same(expected.selection) {
+		return ErrUpdateConflict
+	}
+	return nil
+}
+
 type updatePhase string
 
 const (
@@ -114,9 +165,19 @@ func (m *Manager) Update(ctx context.Context, executablePath string) (err error)
 	if _, err := m.resumeUpdate(ctx, false); err != nil {
 		return err
 	}
+	return m.update(ctx, executablePath, nil)
+}
+
+// update requires the operation lock; expected is checked again after preparation.
+func (m *Manager) update(ctx context.Context, executablePath string, expected *UpdateToken) (err error) {
 	candidate, err := m.prepareSelection(executablePath)
 	if err != nil {
 		return err
+	}
+	if expected != nil {
+		if err := m.checkUpdateToken(ctx, *expected); err != nil {
+			return err
+		}
 	}
 	previous, err := m.readSelection()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -169,6 +230,9 @@ func (m *Manager) Update(ctx context.Context, executablePath string) (err error)
 		}
 	}
 	if !running {
+		if expected != nil {
+			return ErrUpdateConflict
+		}
 		release, lockErr := lockInstance(m.app.directory)
 		if lockErr != nil {
 			return lockErr
