@@ -463,3 +463,34 @@ Applications own reconnection, client replacement, UI epochs, and disposal of
 connections completed after UI shutdown. Calls are never automatically replayed.
 Protocol compatibility does not imply application-method availability: an
 unregistered method returns `*RPCError` with code `-32601` (method not found).
+
+### Configuration lifecycle
+
+Configuration schemas, file loading, reload policy, and state replacement belong
+to the application. Storage is available during service Startup; successful
+Startup precedes Ready. A reload implemented as an application RPC participates
+in the normal shutdown admission, drain, and cooperative cancellation sequence.
+It does not acquire the Manager's operation lock or form a transaction with Update.
+Handlers must honor cancellation and coordinate state publication with Shutdown.
+
+Serialize reload admission through loading, complete validation, replacement
+preparation, and publication. Locking only publication allows an older candidate
+to overwrite a newer one. Check cancellation and closing state before publication.
+Increment the applied revision only after successful publication; track the last
+reload outcome separately from the currently applied revision. Cancellation after
+publication does not undo it. Applications own cleanup of prepared resources and
+any partial side effects of a failed apply. Sanitize errors that may contain secrets.
+
+Applications choose whether startup loads disk or restores last-applied state.
+Preserving a path does not preserve its contents: restart and binary update read
+new disk contents under a load-on-start policy. Last-applied restoration requires
+an application-owned snapshot or resolvable reference and a crash-consistent
+publication/persistence policy. An opaque revision alone cannot restore values.
+The framework does not automatically persist configuration or credentials.
+
+Binary rollback restores the previous executable and arguments, not configuration,
+application data, or transient environment. Previous binaries must tolerate the
+persisted state left by candidate startup, or the application must provide its own
+recovery policy. A Ready handshake confirms startup, not semantic equivalence of
+configuration. Execution generations, configuration revisions, and UI epochs are
+separate identities.
