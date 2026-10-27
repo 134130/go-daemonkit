@@ -451,3 +451,15 @@ that Manager's environment: launcher crashes do not preserve transient secrets o
 environment-only configuration. Store non-secret invocation identity in argv;
 applications must distinguish optional default configuration from required files.
 Old environment-only selections cannot reconstruct an environment never recorded.
+
+### Connection lifetime
+
+`Client.Done()` closes when its receive loop exits; `Client.Err()` returns the
+first connection failure. Local Close reports `ErrClientClosed` unless an earlier
+transport error already exists. Multiple observers can wait on Done. This detects
+observed disconnection, not silent network failure or daemon health.
+
+Applications own reconnection, client replacement, UI epochs, and disposal of
+connections completed after UI shutdown. Calls are never automatically replayed.
+Protocol compatibility does not imply application-method availability: an
+unregistered method returns `*RPCError` with code `-32601` (method not found).

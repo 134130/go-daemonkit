@@ -190,6 +190,20 @@ func (c *Client) fail(err error) {
 	_ = c.conn.CloseNow()
 }
 
+// Done closes when the connection's receive loop has exited, after pending calls
+// and subscriptions have been failed. It reports observed disconnection, not a
+// heartbeat or daemon health guarantee. Close also closes Done.
+func (c *Client) Done() <-chan struct{} { return c.done }
+
+// Err returns the first connection failure, or nil until failure is observed.
+// After Done closes it is always non-nil. Local Close uses ErrClientClosed unless
+// a transport failure was already recorded. Calling Close does not erase that cause.
+func (c *Client) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+
 // Close fails pending calls and waits for the receive loop to stop.
 func (c *Client) Close() error {
 	c.fail(ErrClientClosed)
