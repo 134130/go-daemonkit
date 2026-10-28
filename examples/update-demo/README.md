@@ -43,7 +43,7 @@ supported by their build version. There is no dynamic API discovery.
 | Key | Action |
 | --- | --- |
 | ↑ / ↓ | Select a local build |
-| Enter | Switch to the selected build; start it if stopped |
+| Enter | Switch the connected daemon to the selected build |
 | 1 | `demo.now` — v1+ |
 | 2 | `demo.greet` — v2+ |
 | 3 | `demo.runtime` — v3+ |
@@ -86,8 +86,15 @@ switching, the UI obtains the actual daemon version, PID, and readiness through
 The framework copies the candidate into managed release storage, stops the old
 daemon, verifies the replacement, and rolls back if replacement startup fails.
 The UI reconnects after success or failure and reports the resulting daemon.
-When stopped, the UI selects the candidate and then starts it; there is no
-previous running process to restore if that start fails.
+Switching requires a connected Ready daemon. Press c to start or reconnect first.
+The command captures the displayed Status.UpdateToken and uses Manager.UpdateIf.
+If another lifecycle operation changed the execution, the UI refreshes status and
+the build list and asks you to select again; it does not retry the update.
+
+Client.Done detects connection closure without a polling RPC. Disconnection marks
+readiness unknown; it does not prove the daemon stopped. Old connection notices
+and command results cannot overwrite newer UI state. Closing the UI cancels its
+connection watcher and in-flight command; RPCs are never automatically replayed.
 
 The CLI executable is not replaced. Rebuild only while the TUI is closed:
 Windows locks the running CLI executable. Closing during a switch cancels the

@@ -116,10 +116,18 @@ func TestVersionSwitch(t *testing.T) {
 			t.Error(err)
 		}
 	}()
+	if err := manager.Update(ctx, builds[0].path); err != nil {
+		t.Fatal(err)
+	}
+	initial := s.execute(ctx, connectAction, "", daemon.UpdateToken{})
+	if initial.err != nil {
+		t.Fatal(initial.err)
+	}
+	expected := initial.info.UpdateToken
 	var previousPID int
 	for _, index := range []int{0, 1, 2, 0} {
 		b := builds[index]
-		result := s.execute(ctx, updateAction, b.path)
+		result := s.execute(ctx, updateAction, b.path, expected)
 		if result.err != nil {
 			t.Fatalf("switch %s: %v", b.version, result.err)
 		}
@@ -127,8 +135,9 @@ func TestVersionSwitch(t *testing.T) {
 			t.Fatalf("unexpected daemon: %+v", result)
 		}
 		previousPID = result.info.PID
+		expected = result.info.UpdateToken
 		for _, a := range []action{nowAction, rawAction, greetAction, runtimeAction} {
-			result = s.execute(ctx, a, "")
+			result = s.execute(ctx, a, "", daemon.UpdateToken{})
 			supported := a == nowAction || a == rawAction || a == greetAction && index >= 1 || a == runtimeAction && index >= 2
 			if supported {
 				if result.err != nil {
@@ -142,21 +151,55 @@ func TestVersionSwitch(t *testing.T) {
 			}
 		}
 	}
-	if result := s.execute(ctx, watchAction, ""); result.err != nil {
+	if result := s.execute(ctx, watchAction, "", daemon.UpdateToken{}); result.err != nil {
 		t.Fatal(result.err)
 	}
-	if result := s.execute(ctx, connectAction, ""); result.err != nil || result.info.Version != "0.0.1" {
+	if result := s.execute(ctx, connectAction, "", daemon.UpdateToken{}); result.err != nil || result.info.Version != "0.0.1" {
 		t.Fatalf("reconnect: %+v", result)
 	}
 	// Missing input must leave the active daemon usable.
-	if result := s.execute(ctx, updateAction, filepath.Join(dir, "missing")); result.err == nil || !result.connected || result.info.Version != "0.0.1" {
+	if result := s.execute(ctx, updateAction, filepath.Join(dir, "missing"), expected); result.err == nil || !result.connected || result.info.Version != "0.0.1" {
 		t.Fatalf("failed update: %+v", result)
 	}
-	if result := s.execute(ctx, stopAction, ""); result.err != nil || result.connected {
+	beforeStop := s.execute(ctx, nowAction, "", daemon.UpdateToken{})
+	if beforeStop.err != nil {
+		t.Fatal(beforeStop.err)
+	}
+	ui := newModel(ctx, s, builds)
+	ui.Update(beforeStop)
+	observed := make(chan tea.Msg, 1)
+	go func() { observed <- watchConnection(ctx, beforeStop.client)() }()
+	if err := manager.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case message := <-observed:
+		ui.Update(message)
+	case <-time.After(5 * time.Second):
+		t.Fatal("remote stop was not observed")
+	}
+	if ui.overview.connected || ui.overview.info.State != daemon.StatusUnknown {
+		t.Fatal("closed connection displayed as Ready")
+	}
+	ui.Update(beforeStop) // A queued response must not resurrect a closed connection.
+	if ui.overview.connected {
+		t.Fatal("late response restored closed connection")
+	}
+	if result := s.execute(ctx, stopAction, "", daemon.UpdateToken{}); result.err != nil || result.connected {
 		t.Fatalf("stop: %+v", result)
 	}
-	if result := s.execute(ctx, updateAction, builds[2].path); result.err != nil || result.info.Version != "0.0.3" {
-		t.Fatalf("start selected: %+v", result)
+	if result := s.execute(ctx, updateAction, builds[2].path, expected); !errors.Is(result.err, daemon.ErrUpdateConflict) || result.connected {
+		t.Fatalf("stopped conflict: %+v", result)
+	}
+	restarted := s.execute(ctx, connectAction, "", daemon.UpdateToken{})
+	if restarted.err != nil {
+		t.Fatal(restarted.err)
+	}
+	if result := s.execute(ctx, updateAction, builds[2].path, expected); !errors.Is(result.err, daemon.ErrUpdateConflict) || result.info.Version != "0.0.1" || len(result.builds) != 3 {
+		t.Fatalf("stale token: %+v", result)
+	}
+	if result := s.execute(ctx, updateAction, builds[2].path, restarted.info.UpdateToken); result.err != nil || result.info.Version != "0.0.3" {
+		t.Fatalf("fresh selection: %+v", result)
 	}
 }
 
@@ -177,4 +220,34 @@ func TestDiscoverBuilds(t *testing.T) {
 	if err != nil || len(builds) != 1 || builds[0].version != "0.0.2" {
 		t.Fatalf("%v %v", builds, err)
 	}
+}
+
+func TestModelIgnoresOldCommandsAndConnections(t *testing.T) {
+	m := newModel(context.Background(), &session{}, []build{{version: "0.0.3"}})
+	m.epoch = 2
+	m.client = &daemon.Client{}
+	m.overview.info.Version = "0.0.3"
+	m.overview.connected = true
+	m.Update(resultMsg{epoch: 1, info: daemon.Status{Version: "0.0.1"}})
+	m.Update(disconnectedMsg{client: &daemon.Client{}})
+	if !m.busy || !m.overview.connected || m.overview.info.Version != "0.0.3" {
+		t.Fatal("stale event changed the UI")
+	}
+	m.Update(resultMsg{epoch: 2, err: daemon.ErrUpdateConflict, builds: []build{{version: "0.0.2"}}})
+	if m.busy || len(m.overview.builds) != 1 || m.overview.builds[0].version != "0.0.2" || !strings.Contains(m.status, "select a build again") {
+		t.Fatal("conflict did not refresh selection")
+	}
+}
+
+func TestConnectionWatchStopsWithUI(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan tea.Msg, 1)
+		go func() { result <- watchConnection(ctx, &daemon.Client{})() }()
+		synctest.Wait()
+		cancel()
+		if msg := <-result; msg != nil {
+			t.Fatalf("canceled watcher: %v", msg)
+		}
+	})
 }

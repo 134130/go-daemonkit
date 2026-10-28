@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"charm.land/bubbles/v2/spinner"
@@ -11,6 +12,8 @@ import (
 )
 
 type model struct {
+	epoch        uint64
+	client       *daemon.Client
 	ctx          context.Context
 	session      *session
 	size         Size
@@ -30,7 +33,13 @@ func (m *model) command(action action) tea.Cmd {
 	if len(m.overview.builds) > 0 {
 		candidate = m.overview.builds[m.overview.selected].path
 	}
-	return func() tea.Msg { return m.session.execute(m.ctx, action, candidate) }
+	m.epoch++
+	epoch, ctx, session, expected := m.epoch, m.ctx, m.session, m.overview.info.UpdateToken
+	return func() tea.Msg {
+		result := session.execute(ctx, action, candidate, expected)
+		result.epoch = epoch
+		return result
+	}
 }
 func (m *model) Init() tea.Cmd { return tea.Batch(m.command(connectAction), m.spinner.Tick) }
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -55,8 +64,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.overview.selected = min(len(m.overview.builds)-1, m.overview.selected+1)
 			}
 			action, ok := map[string]action{"c": connectAction, "enter": updateAction, "1": nowAction, "2": greetAction, "3": runtimeAction, "r": rawAction, "w": watchAction, "s": stopAction}[key]
-			if action == updateAction && m.overview.connected && m.overview.builds[m.overview.selected].version == m.overview.info.Version {
-				ok = false
+			if action == updateAction {
+				ok = m.overview.connected && len(m.overview.builds) > 0
+				if ok && m.overview.builds[m.overview.selected].version == m.overview.info.Version {
+					ok = false
+				}
 			}
 			if ok {
 				m.busy = true
@@ -68,11 +80,42 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				command = tea.Batch(m.command(action), m.spinner.Tick)
 			}
 		}
+	case disconnectedMsg:
+		if message.client != m.client {
+			return m, nil
+		}
+		m.client = nil
+		m.overview.connected = false
+		m.overview.info.State = daemon.StatusUnknown
+		m.status = "Disconnected; press c to reconnect"
+		entry = fmt.Sprintf("Connection closed: %v", message.client.Err())
 	case resultMsg:
+		if message.epoch != m.epoch {
+			return m, nil
+		}
+		if message.client != nil && message.client.Err() != nil {
+			message.connected = false
+			message.info.State = daemon.StatusUnknown
+			message.err = errors.Join(message.err, message.client.Err())
+		}
+		if message.builds != nil {
+			m.overview.builds = message.builds
+			m.overview.selected = 0
+		}
+		if message.client != m.client {
+			m.client = message.client
+			if message.connected {
+				command = watchConnection(m.ctx, message.client)
+			}
+		}
+		msg = message
 		m.busy = false
 		if message.err != nil {
 			m.status = "Failed: " + string(message.action)
 			entry = fmt.Sprintf("%s failed: %v", message.action, message.err)
+			if errors.Is(message.err, daemon.ErrUpdateConflict) {
+				m.status = "Daemon changed; review status and select a build again"
+			}
 		} else {
 			m.status = "Ready"
 			if !message.connected {
@@ -127,4 +170,17 @@ func (m *model) View() tea.View {
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion
 	return view
+}
+
+type disconnectedMsg struct{ client *daemon.Client }
+
+func watchConnection(ctx context.Context, client *daemon.Client) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case <-client.Done():
+			return disconnectedMsg{client: client}
+		case <-ctx.Done():
+			return nil
+		}
+	}
 }

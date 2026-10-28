@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -25,6 +26,9 @@ const (
 )
 
 type resultMsg struct {
+	epoch     uint64
+	client    *daemon.Client
+	builds    []build
 	action    action
 	info      daemon.Status
 	connected bool
@@ -60,7 +64,7 @@ func (s *session) connect(ctx context.Context) error {
 	s.client = client
 	return nil
 }
-func (s *session) execute(parent context.Context, action action, candidate string) resultMsg {
+func (s *session) execute(parent context.Context, action action, candidate string, expected daemon.UpdateToken) resultMsg {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
@@ -83,9 +87,11 @@ func (s *session) execute(parent context.Context, action action, candidate strin
 			break
 		}
 		s.disconnect()
-		result.err = s.manager.Update(ctx, candidate)
-		if result.err == nil {
-			result.err = s.manager.EnsureRunning(ctx)
+		result.err = s.manager.UpdateIf(ctx, candidate, expected)
+		if errors.Is(result.err, daemon.ErrUpdateConflict) {
+			var err error
+			result.builds, err = discoverBuilds(filepath.Dir(candidate))
+			result.err = errors.Join(result.err, err)
 		}
 		// Reconnect after success or rollback. Never replay the interrupted RPC.
 		result.err = errors.Join(result.err, s.connect(ctx))
@@ -135,10 +141,11 @@ func (s *session) execute(parent context.Context, action action, candidate strin
 	status, err := s.manager.Status(infoCtx)
 	end()
 	result.info = status
-	result.connected = status.State == daemon.StatusReady && s.client != nil
+	result.connected = status.State == daemon.StatusReady && s.client != nil && s.client.Err() == nil
 	if !result.connected {
 		s.disconnect()
 	}
+	result.client = s.client
 	result.err = errors.Join(result.err, err)
 	return result
 }
