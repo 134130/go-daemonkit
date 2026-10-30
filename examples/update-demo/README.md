@@ -113,3 +113,34 @@ Application data is not rolled back.
 Run `mise run test` for layout checks, a synctest clock lifecycle test, and a real
 process test that builds all versions and exercises upgrade, downgrade, RPC
 availability, events, and restarting from the stopped state.
+
+## Configuration
+
+The demo reads user-level `daemonkit-demo/config.toml` from the platform config
+directory. `--config /absolute/file.toml` selects an explicit file (it must exist
+when loaded). The path is stored in the managed daemon arguments when that release
+is selected; another CLI does not change an existing daemon's configuration path.
+All demo instances use the same default config file unless given explicit paths.
+
+```toml
+[daemon]
+greeting = "Hello" # Used by the v2+ greeting RPC.
+```
+
+```sh
+./updatables/update-demo-v0.0.1 config path
+./updatables/update-demo-v0.0.1 config set daemon.greeting '"Welcome"'
+./updatables/update-demo-v0.0.1 config get daemon.greeting
+./updatables/update-demo-v0.0.1 config edit
+./updatables/update-demo-v0.0.1 config reload
+```
+
+Set preserves surrounding comments and formatting. Edit uses VISUAL, EDITOR, or
+the platform editor with a temporary file. Failed edits retain a recovery draft;
+concurrent saves use last-save-wins. Get shows the file value, not the applied value
+or defaults. Neither editing command starts the daemon or applies runtime state.
+
+Run v2 or v3 and press **2** to observe the greeting before and after Reload.
+Reload connects to an existing daemon, verifies its fixed config path matches the
+CLI target, and publishes validated state. A failed reload retains the last applied
+greeting. Restart/update loads disk again; no last-applied snapshot is persisted.

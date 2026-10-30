@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/134130/go-daemonkit/config"
 	"log"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	daemon "github.com/134130/go-daemonkit"
@@ -12,7 +14,8 @@ import (
 )
 
 type demoService struct {
-	version string
+	version       string
+	configuration atomic.Pointer[demoConfig]
 	ClockService
 }
 
@@ -20,9 +23,9 @@ func (s *demoService) Now(context.Context, api.Empty) (api.NowResponse, error) {
 	return api.NowResponse{Version: s.version, Time: time.Now()}, nil
 }
 func (s *demoService) Greet(_ context.Context, request api.GreetRequest) (api.GreetResponse, error) {
-	return api.GreetResponse{Version: s.version, Message: fmt.Sprintf("Hello, %s! This RPC was added in v0.0.2.", request.Name)}, nil
+	return api.GreetResponse{Version: s.version, Message: fmt.Sprintf("%s, %s! This RPC was added in v0.0.2.", s.configuration.Load().Daemon.Greeting, request.Name)}, nil
 }
-func runDaemon(ctx context.Context, options daemon.Options) error {
+func runDaemon(ctx context.Context, options daemon.Options, configPath string) error {
 	app, err := daemon.New(options)
 	if err != nil {
 		return err
@@ -31,6 +34,34 @@ func runDaemon(ctx context.Context, options daemon.Options) error {
 		tick.Version = options.Version
 		return app.PublishTopic(api.Tick, tick)
 	}}}
+	file, err := configFile(options, configPath)
+	if err != nil {
+		return err
+	}
+	configuration, err := config.NewService(file, func(ctx context.Context, next demoConfig) (config.Prepared, error) {
+		return config.Prepared{Commit: func(ctx context.Context) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			service.configuration.Store(&next)
+			return nil
+		}}, nil
+	})
+	if err != nil {
+		return err
+	}
+	if err := app.Register(configuration); err != nil {
+		return err
+	}
+	if err := app.Handle(api.ReloadConfig, func(ctx context.Context, request api.ReloadRequest) (api.ReloadResponse, error) {
+		if request.Path != file.Path() {
+			return api.ReloadResponse{}, fmt.Errorf("CLI config path differs from the running daemon configuration")
+		}
+		err := configuration.Reload(ctx)
+		return api.ReloadResponse{Revision: configuration.Status().Revision}, err
+	}); err != nil {
+		return err
+	}
 	if err := app.Register(service); err != nil {
 		return err
 	}

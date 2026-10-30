@@ -32,3 +32,13 @@ type RuntimeResponse struct {
 	OS        string `json:"os"`
 	Arch      string `json:"arch"`
 }
+
+var ReloadConfig = daemon.NewMethod[ReloadRequest, ReloadResponse]("demo.config.reload")
+
+type ReloadResponse struct {
+	Revision uint64 `json:"revision"`
+}
+
+type ReloadRequest struct {
+	Path string `json:"path"`
+}

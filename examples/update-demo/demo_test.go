@@ -85,6 +85,8 @@ func TestVersionSwitch(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 	t.Setenv("XDG_STATE_HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("APPDATA", dir)
 	t.Setenv("LOCALAPPDATA", dir)
 	suffix := ""
 	if runtime.GOOS == "windows" {
@@ -151,6 +153,60 @@ func TestVersionSwitch(t *testing.T) {
 			}
 		}
 	}
+	// Saving changes disk only; explicit Reload publishes the validated candidate.
+	if result := s.execute(ctx, updateAction, builds[1].path, expected); result.err != nil {
+		t.Fatal(result.err)
+	}
+	command := func(args ...string) []byte {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, builds[0].path, args...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("config command: %v\n%s", err, out)
+		}
+		return out
+	}
+	command("config", "set", "daemon.greeting", `"Welcome"`)
+	if got := string(command("config", "get", "daemon.greeting")); !strings.Contains(got, "Welcome") {
+		t.Fatal(got)
+	}
+	before := s.execute(ctx, greetAction, "", daemon.UpdateToken{})
+	if before.err != nil || !strings.HasPrefix(before.detail, "Hello,") {
+		t.Fatalf("save applied prematurely: %+v", before)
+	}
+	command("config", "reload")
+	after := s.execute(ctx, greetAction, "", daemon.UpdateToken{})
+	if after.err != nil || !strings.HasPrefix(after.detail, "Welcome,") {
+		t.Fatalf("reload not applied: %+v", after)
+	}
+	file, err := configFile(options, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file.Path(), []byte("[broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(ctx, builds[0].path, "config", "reload")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("invalid reload accepted: %s", out)
+	}
+	after = s.execute(ctx, greetAction, "", daemon.UpdateToken{})
+	if after.err != nil || !strings.HasPrefix(after.detail, "Welcome,") {
+		t.Fatalf("failed reload changed runtime: %+v", after)
+	}
+	if err := file.Save(ctx, []byte("[daemon]\ngreeting='Hello'\n")); err != nil {
+		t.Fatal(err)
+	}
+	command("config", "reload")
+	state, err := manager.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := s.execute(ctx, updateAction, builds[0].path, state.UpdateToken)
+	if restored.err != nil {
+		t.Fatal(restored.err)
+	}
+	expected = restored.info.UpdateToken
 	if result := s.execute(ctx, watchAction, "", daemon.UpdateToken{}); result.err != nil {
 		t.Fatal(result.err)
 	}

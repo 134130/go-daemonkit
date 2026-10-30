@@ -27,6 +27,7 @@ func main() {
 func run() error {
 	buildDir := flag.String("builds", "updatables", "directory containing locally built executables")
 	instance := flag.String("instance", "default", "isolated demo instance")
+	configPath := flag.String("config", "", "explicit TOML config file (default: user config directory)")
 	showVersion := flag.Bool("version", false, "print this CLI's build version")
 	flag.Parse()
 	if version != "0.0.1" && version != "0.0.2" && version != "0.0.3" {
@@ -36,19 +37,31 @@ func run() error {
 		fmt.Println(version)
 		return nil
 	}
-	if flag.NArg() > 1 {
-		return fmt.Errorf("usage: update-demo [--builds DIR] [--instance NAME] [daemon|stop|status]")
+	if flag.NArg() > 1 && flag.Arg(0) != "config" {
+		return fmt.Errorf("usage: update-demo [--builds DIR] [--instance NAME] [daemon|stop|status|config ...]")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	options := daemon.Options{AppID: "daemonkit-demo", InstanceID: *instance, Version: version}
 	if flag.Arg(0) == "daemon" {
-		return runDaemon(ctx, options)
+		return runDaemon(ctx, options, *configPath)
+	}
+	if flag.Arg(0) == "config" {
+		return runConfig(ctx, options, *configPath, flag.Args()[1:])
 	}
 	if flag.Arg(0) != "" && flag.Arg(0) != "stop" && flag.Arg(0) != "status" {
 		return fmt.Errorf("unknown command %q", flag.Arg(0))
 	}
-	manager, err := daemon.NewManager(options, "--instance", *instance, "daemon")
+	args := []string{"--instance", *instance}
+	if *configPath != "" {
+		file, err := configFile(options, *configPath)
+		if err != nil {
+			return err
+		}
+		args = append(args, "--config", file.Path())
+	}
+	args = append(args, "daemon")
+	manager, err := daemon.NewManager(options, args...)
 	if err != nil {
 		return err
 	}

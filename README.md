@@ -466,8 +466,8 @@ unregistered method returns `*RPCError` with code `-32601` (method not found).
 
 ### Configuration lifecycle
 
-Configuration schemas, file loading, reload policy, and state replacement belong
-to the application. Storage is available during service Startup; successful
+Configuration schemas, file selection, reload policy, and state replacement belong
+to the application. The optional config helpers below implement loading and reload mechanics. Storage is available during service Startup; successful
 Startup precedes Ready. A reload implemented as an application RPC participates
 in the normal shutdown admission, drain, and cooperative cancellation sequence.
 It does not acquire the Manager's operation lock or form a transaction with Update.
@@ -494,3 +494,74 @@ persisted state left by candidate startup, or the application must provide its o
 recovery policy. A Ready handshake confirms startup, not semantic equivalence of
 configuration. Execution generations, configuration revisions, and UI epochs are
 separate identities.
+
+### TOML configuration helpers
+
+The optional `config` package implements the file and reload mechanics above.
+Applications define their own schema (including any daemon/CLI/TUI sections),
+validation, RPC names, and live-state publication. It does not depend on App.
+
+```go
+file, err := config.New(config.Options[Settings]{
+    AppID: "myapp",
+    Defaults: func() Settings { return defaultSettings() }, // Fresh maps/slices.
+    Validate: validateSettings, // func(context.Context, Settings) error
+})
+// Check err before using file.
+value, err := file.Load(ctx)
+raw, err := file.Get(ctx, "daemon.idle_timeout")
+err = file.Set(ctx, "daemon.idle_timeout", `"30m"`)
+err = file.Edit(ctx) // VISUAL, EDITOR, then vi/notepad.exe.
+```
+
+Default paths are `$XDG_CONFIG_HOME/<appID>/config.toml` (falling back to
+`~/.config`) on Linux/macOS and the user config directory (`APPDATA`) on Windows.
+`Options.Path` explicitly selects another file and is resolved to an absolute path
+at construction. No CWD discovery, parent search, layering, environment expansion,
+or flag binding occurs. Missing default files use Defaults; missing explicit files
+fail to load. Save can create a file. Defaults are not automatically written back.
+Unknown struct fields and invalid TOML are rejected; files are limited to 1 MiB.
+
+Get reads file values only, not defaults or runtime state. Set accepts TOML dotted
+keys (including quoted components) and TOML literals. It changes only the existing
+value span, preserving all bytes outside it. New keys are inserted into their table;
+new tables are appended. Replacing an entire array/inline table replaces comments
+inside that value. Editing elements of array tables or inside inline tables is not
+supported; use Edit. The source-range parser is isolated in `config/values.go` and
+pinned through the go-toml dependency; it is not part of our public API.
+
+Set and Edit validate the complete candidate before writing. Save uses a temporary
+file in the target directory and rename replacement, with last-save-wins semantics:
+there is no conflict detection or merge, and concurrent edits can overwrite each
+other. The parent directory must be application-controlled. Symlink targets and
+non-regular files are rejected. New files use private permissions; existing Unix
+permission bits are preserved. Windows replacements use a current-user DACL rather
+than preserving a custom ACL. A successful save is not a runtime reload or a
+power-loss durability guarantee; native Windows behavior remains validation debt.
+
+Edit opens a private draft and waits for the editor. An explicit executable and
+arguments can be supplied as `file.Edit(ctx, "code", "--wait")`; the draft path is
+appended as one argument. VISUAL/EDITOR are trusted shell commands when used.
+Validation, editor, or save failure returns `*config.EditError` with the retained
+Path for recovery. The caller owns deleting that draft and its private directory.
+Unchanged edits do not write the target. Successful edits remove the draft.
+Parser errors omit source excerpts; application validators must also avoid secrets
+in errors. External editors may manage their own backups/history.
+
+`config.NewService(file, prepare)` returns a lifecycle participant for
+`app.Register`. Prepare returns `config.Prepared{Commit, Discard}`. Load, validation,
+preparation, publication, and failed-candidate cleanup are serialized. Commit owns
+atomic publication; Discard cleans uncommitted resources even when Prepare returns
+an error. Successful Commit transfers ownership to the app. Callbacks must honor
+cancellation; Commit errors do not imply their side effects were undone.
+
+Startup applies the first candidate; Reload explicitly applies another. Shutdown
+closes admission, cancels preparation, and waits subject to its context. A Commit
+already in progress may finish. Status reports process-local Revision, Attempts,
+LastAttempt, and LastError. The revision advances only on successful Commit. The
+service is single-lifecycle; construct a new instance after Shutdown or failed
+Startup. Callbacks may read Status but must not reenter lifecycle methods.
+
+See `config/example_test.go` for a runnable publication example and the update demo
+for CLI get/set/edit plus an application-owned reload RPC. There is no automatic
+watcher, last-applied persistence, rollback, or configuration RPC registration.
