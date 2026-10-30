@@ -572,8 +572,16 @@ The optional `daemoncobra` package supplies ordinary Cobra commands:
 
 ```go
 root.AddCommand(
-    daemoncobra.NewDaemonCommand(manager),
-    daemoncobra.NewConfigCommand(file),
+    daemoncobra.NewDaemonCommand(func(cmd *cobra.Command) (*daemon.Manager, error) {
+        return newManager(cmd) // Resolve application flags and the launch environment.
+    }),
+    daemoncobra.NewConfigCommand(func(cmd *cobra.Command) (*config.File[Settings], error) {
+        path, err := cmd.Flags().GetString("config")
+        if err != nil {
+            return nil, err
+        }
+        return config.New(config.Options[Settings]{AppID: "myapp", Path: path})
+    }),
 )
 ```
 
@@ -584,14 +592,23 @@ daemon and has a five-second timeout, shortened by the caller's context. A stopp
 daemon is a successful observation. Inspection failures return an error after
 printing any partial information.
 
-`config` contains `path`, `get KEY`, `set KEY VALUE`, and `edit`. Values passed to
+`config` contains `path`, `get KEY`, `set KEY VALUE`, `edit`, and `validate`. Values passed to
 `set` are TOML literals; use `--` before positional arguments containing negative
 values. `get` prints file values as JSON, not defaults or applied runtime state.
 Saving does not apply runtime configuration. Add an application-owned `reload`
 RPC command with `AddCommand` if needed. The editor inherits the process terminal.
 
-Construct the Manager and File after resolving application instance/config
-selection. These groups capture those objects; they do not bind application flags.
+Resolvers run once per operation after argument validation and pre-run hooks,
+never for help. Register application flags (including `--config` above) on the
+root; resolvers read their parsed values. `newManager` above is an application
+function that selects launch arguments and environment. Resolvers must return a
+non-nil object or an error. File resolvers construct without loading so malformed
+TOML remains editable. Keep file loading out of common pre-run hooks.
+
+`validate` loads and validates the file without applying it. An absent optional
+default file validates the configured defaults; an absent explicit file fails.
+Applications provide schema/defaults/validation and normalize values when preparing
+runtime state. Editing and validation do not imply a daemon reload.
 The application owns signals, exit codes, foreground daemon execution, and update
 policy. Returned commands can be renamed or extended. A root `version` command is
 not installed. Core daemonkit packages do not import Cobra.
