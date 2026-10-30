@@ -565,3 +565,33 @@ Startup. Callbacks may read Status but must not reenter lifecycle methods.
 See `config/example_test.go` for a runnable publication example and the update demo
 for CLI get/set/edit plus an application-owned reload RPC. There is no automatic
 watcher, last-applied persistence, rollback, or configuration RPC registration.
+
+### Cobra command groups
+
+The optional `daemoncobra` package supplies ordinary Cobra commands:
+
+```go
+root.AddCommand(
+    daemoncobra.NewDaemonCommand(manager),
+    daemoncobra.NewConfigCommand(file),
+)
+```
+
+`daemon` contains `status`, `start`, `stop`, and `restart`. Status prints the
+caller's version, the running daemon's version, process state, and diagnostic
+paths; `--json` prints the status snapshot. Inspection never starts or repairs a
+daemon and has a five-second timeout, shortened by the caller's context. A stopped
+daemon is a successful observation. Inspection failures return an error after
+printing any partial information.
+
+`config` contains `path`, `get KEY`, `set KEY VALUE`, and `edit`. Values passed to
+`set` are TOML literals; use `--` before positional arguments containing negative
+values. `get` prints file values as JSON, not defaults or applied runtime state.
+Saving does not apply runtime configuration. Add an application-owned `reload`
+RPC command with `AddCommand` if needed. The editor inherits the process terminal.
+
+Construct the Manager and File after resolving application instance/config
+selection. These groups capture those objects; they do not bind application flags.
+The application owns signals, exit codes, foreground daemon execution, and update
+policy. Returned commands can be renamed or extended. A root `version` command is
+not installed. Core daemonkit packages do not import Cobra.

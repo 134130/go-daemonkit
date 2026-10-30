@@ -42,7 +42,7 @@ func TestStatusReadyUsesDaemonVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, err := manager.Status(t.Context())
-	if err != nil || status.State != StatusReady || status.Version != "test-binary" || status.ProtocolVersion != protocolVersion || status.PID != os.Getpid() {
+	if err != nil || status.State != StatusReady || status.Version != "test-binary" || status.ClientVersion != "different-client" || status.ProtocolVersion != protocolVersion || status.PID != os.Getpid() {
 		t.Fatalf("Status = %+v, %v", status, err)
 	}
 	changed := record

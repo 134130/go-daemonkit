@@ -24,6 +24,8 @@ const (
 // Status is a best-effort snapshot. Concurrent lifecycle operations can change
 // it immediately. Paths are available even when inspection returns an error.
 type Status struct {
+	// ClientVersion is the version supplied when constructing this Manager.
+	ClientVersion string
 	// UpdateToken is valid only for a Ready managed execution with matching selection.
 	UpdateToken UpdateToken
 	AppID       string
@@ -52,7 +54,8 @@ type Status struct {
 func (m *Manager) Status(ctx context.Context) (Status, error) {
 	app := m.app
 	result := Status{
-		AppID: app.options.AppID, InstanceID: app.options.InstanceID, State: StatusUnknown,
+		ClientVersion: app.options.Version,
+		AppID:         app.options.AppID, InstanceID: app.options.InstanceID, State: StatusUnknown,
 		StateDir: app.directory, LogPath: filepath.Join(app.directory, "logs", "daemon.log"),
 		StdoutPath: filepath.Join(app.directory, "logs", "daemon.stdout"), StderrPath: filepath.Join(app.directory, "logs", "daemon.stderr"), Endpoint: app.endpoint,
 	}
