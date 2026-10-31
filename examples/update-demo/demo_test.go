@@ -103,7 +103,7 @@ func TestVersionSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := daemon.Options{AppID: "daemonkit-demo", Version: "0.0.1"}
-	manager, err := daemon.NewManager(options, "daemon")
+	manager, err := daemon.NewManager(options, "daemon", "run")
 	if err != nil {
 		t.Fatal(err)
 	}

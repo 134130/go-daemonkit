@@ -67,11 +67,17 @@ The status command prints all three paths.
 To inspect runtime information and paths, or stop outside the TUI:
 
 ```sh
-./updatables/update-demo-v0.0.1 status
-./updatables/update-demo-v0.0.1 stop
+./updatables/update-demo-v0.0.1 daemon status
+./updatables/update-demo-v0.0.1 daemon stop
 ```
 
-On Windows, use `./updatables/update-demo-v0.0.1.exe stop`.
+The CLI uses `daemoncobra` with execution-time resolvers, so `--instance` and
+`--config` work before or after subcommands. `daemon status --json` prints a
+machine-readable snapshot; status never starts the daemon. `daemon start` ensures
+readiness, `daemon restart` restarts the selected release, and `daemon run` runs in
+the foreground. Running without a subcommand opens the TUI.
+
+On Windows, use `./updatables/update-demo-v0.0.1.exe daemon stop`.
 For an independent instance, launch with `--instance another`; use the same flag
 when stopping it. Use `--builds DIR` to read builds from another directory.
 
@@ -131,6 +137,7 @@ greeting = "Hello" # Used by the v2+ greeting RPC.
 ./updatables/update-demo-v0.0.1 config path
 ./updatables/update-demo-v0.0.1 config set daemon.greeting '"Welcome"'
 ./updatables/update-demo-v0.0.1 config get daemon.greeting
+./updatables/update-demo-v0.0.1 config validate
 ./updatables/update-demo-v0.0.1 config edit
 ./updatables/update-demo-v0.0.1 config reload
 ```
@@ -144,3 +151,7 @@ Run v2 or v3 and press **2** to observe the greeting before and after Reload.
 Reload connects to an existing daemon, verifies its fixed config path matches the
 CLI target, and publishes validated state. A failed reload retains the last applied
 greeting. Restart/update loads disk again; no last-applied snapshot is persisted.
+
+`config validate` checks the file or, if the optional default file is missing,
+the defaults. `config path` and daemon inspection remain available with malformed
+TOML. `config edit` can repair it without parsing before opening the editor.

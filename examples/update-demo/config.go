@@ -2,10 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	daemon "github.com/134130/go-daemonkit"
@@ -31,42 +30,16 @@ func configFile(options daemon.Options, path string) (*config.File[demoConfig], 
 	})
 }
 
-func runConfig(ctx context.Context, options daemon.Options, path string, args []string) error {
-	file, err := configFile(options, path)
+func reloadConfig(ctx context.Context, options daemon.Options, path string, out io.Writer) error {
+	client, err := daemon.Connect(ctx, options)
 	if err != nil {
 		return err
 	}
-	if len(args) == 1 && args[0] == "reload" {
-		client, err := daemon.Connect(ctx, options)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = client.Close() }()
-		result, err := client.Invoke(ctx, api.ReloadConfig, api.ReloadRequest{Path: file.Path()})
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintf(os.Stdout, "Applied revision %d\n", result.Revision)
+	defer func() { _ = client.Close() }()
+	result, err := client.Invoke(ctx, api.ReloadConfig, api.ReloadRequest{Path: path})
+	if err != nil {
 		return err
 	}
-	switch {
-	case len(args) == 1 && args[0] == "path":
-		_, err = fmt.Fprintln(os.Stdout, file.Path())
-	case len(args) == 2 && args[0] == "get":
-		var value any
-		value, err = file.Get(ctx, args[1])
-		if err == nil {
-			err = json.NewEncoder(os.Stdout).Encode(value)
-		}
-	case len(args) == 3 && args[0] == "set":
-		err = file.Set(ctx, args[1], args[2])
-	case len(args) == 1 && args[0] == "edit":
-		err = file.Edit(ctx)
-	default:
-		return errors.New("usage: config path|get KEY|set KEY TOML_VALUE|edit|reload")
-	}
-	if err == nil && (args[0] == "set" || args[0] == "edit") {
-		_, err = fmt.Fprintln(os.Stdout, "File saved; use config reload to apply it to the running daemon.")
-	}
+	_, err = fmt.Fprintf(out, "Applied revision %d\n", result.Revision)
 	return err
 }
